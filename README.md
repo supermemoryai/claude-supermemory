@@ -19,6 +19,7 @@ Your agent remembers what you worked on - across sessions, across projects.
 ```bash
 # Add the plugin marketplace
 /plugin marketplace add supermemoryai/claude-supermemory
+# at different dir at local
 /plugin marketplace add /Users/prasanna/Documents/supermemoryai/claude-supermemory
 
 # Install the plugin
