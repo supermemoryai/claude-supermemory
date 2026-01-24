@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { loadCredentials } = require('./auth');
 
 const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
@@ -45,9 +46,13 @@ function saveSettings(settings) {
 }
 
 function getApiKey(settings) {
-  const apiKey = settings.apiKey || process.env.SUPERMEMORY_API_KEY;
-  if (!apiKey) throw new Error('SUPERMEMORY_API_KEY not set. Get your key at https://console.supermemory.ai');
-  return apiKey;
+  if (settings.apiKey) return settings.apiKey;
+  if (process.env.SUPERMEMORY_API_KEY) return process.env.SUPERMEMORY_API_KEY;
+
+  const credentials = loadCredentials();
+  if (credentials?.apiKey) return credentials.apiKey;
+
+  throw new Error('NO_API_KEY');
 }
 
 function shouldCaptureTool(toolName, settings) {

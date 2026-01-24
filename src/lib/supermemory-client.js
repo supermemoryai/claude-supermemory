@@ -1,11 +1,12 @@
 const Supermemory = require('supermemory').default;
 
 const DEFAULT_PROJECT_ID = 'sm_project_default';
+const API_URL = process.env.SUPERMEMORY_API_URL || 'https://api.supermemory.ai';
 
 class SupermemoryClient {
   constructor(apiKey, containerTag) {
     if (!apiKey) throw new Error('SUPERMEMORY_API_KEY is required');
-    this.client = new Supermemory({ apiKey, baseURL: 'https://api.supermemory.ai' });
+    this.client = new Supermemory({ apiKey, baseURL: API_URL });
     this.containerTag = containerTag || DEFAULT_PROJECT_ID;
   }
 

@@ -2,6 +2,7 @@ const { SupermemoryClient } = require('./lib/supermemory-client');
 const { getContainerTag, getProjectName } = require('./lib/container-tag');
 const { loadSettings, getApiKey, debugLog } = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
+const { startAuthFlow } = require('./lib/auth');
 
 async function main() {
   const settings = loadSettings();
@@ -18,16 +19,24 @@ async function main() {
     try {
       apiKey = getApiKey(settings);
     } catch {
-      writeOutput({
-        hookSpecificOutput: {
-          hookEventName: 'SessionStart',
-          additionalContext: `<supermemory-status>
-API key not configured. Set SUPERMEMORY_API_KEY to enable persistent memory.
-Get your key at: https://console.supermemory.ai
+      try {
+        debugLog(settings, 'No API key found, starting browser auth flow');
+        apiKey = await startAuthFlow();
+        debugLog(settings, 'Auth flow completed successfully');
+      } catch (authErr) {
+        const isTimeout = authErr.message === 'AUTH_TIMEOUT';
+        writeOutput({
+          hookSpecificOutput: {
+            hookEventName: 'SessionStart',
+            additionalContext: `<supermemory-status>
+${isTimeout ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
+If the browser did not open, visit: https://app.supermemory.ai/claude-code-auth
+Or set SUPERMEMORY_API_KEY environment variable manually.
 </supermemory-status>`
-        }
-      });
-      return;
+          }
+        });
+        return;
+      }
     }
 
     const client = new SupermemoryClient(apiKey);
