@@ -31,7 +31,7 @@ async function main() {
             additionalContext: `<supermemory-status>
 ${isTimeout ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
 If the browser did not open, visit: https://console.supermemory.ai/auth/connect
-Or set SUPERMEMORY_API_KEY environment variable manually.
+Or set SUPERMEMORY_CC_API_KEY environment variable manually.
 </supermemory-status>`
           }
         });

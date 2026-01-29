@@ -17,7 +17,7 @@ async function main() {
     apiKey = getApiKey(settings);
   } catch {
     console.log('Supermemory API key not configured.');
-    console.log('Set SUPERMEMORY_API_KEY environment variable to enable memory search.');
+    console.log('Set SUPERMEMORY_CC_API_KEY environment variable to enable memory search.');
     console.log('Get your key at: https://console.supermemory.ai');
     return;
   }

@@ -32,7 +32,7 @@ function loadSettings() {
   } catch (err) {
     console.error(`Settings: Failed to load ${SETTINGS_FILE}: ${err.message}`);
   }
-  if (process.env.SUPERMEMORY_API_KEY) settings.apiKey = process.env.SUPERMEMORY_API_KEY;
+  if (process.env.SUPERMEMORY_CC_API_KEY) settings.apiKey = process.env.SUPERMEMORY_CC_API_KEY;
   if (process.env.SUPERMEMORY_SKIP_TOOLS) settings.skipTools = process.env.SUPERMEMORY_SKIP_TOOLS.split(',').map(s => s.trim());
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
   return settings;
@@ -47,7 +47,7 @@ function saveSettings(settings) {
 
 function getApiKey(settings) {
   if (settings.apiKey) return settings.apiKey;
-  if (process.env.SUPERMEMORY_API_KEY) return process.env.SUPERMEMORY_API_KEY;
+  if (process.env.SUPERMEMORY_CC_API_KEY) return process.env.SUPERMEMORY_CC_API_KEY;
 
   const credentials = loadCredentials();
   if (credentials?.apiKey) return credentials.apiKey;

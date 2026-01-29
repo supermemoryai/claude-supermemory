@@ -5,7 +5,7 @@
       "type": "sse",
       "url": "https://mcp.supermemory.ai/mcp",
       "headers": {
-        "Authorization": "Bearer ${SUPERMEMORY_API_KEY}"
+        "Authorization": "Bearer ${SUPERMEMORY_CC_API_KEY}"
       }
     }
   }

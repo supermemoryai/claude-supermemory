@@ -33,7 +33,8 @@ async function build() {
         format: 'cjs',
         outfile: out,
         minify: true,
-        banner: { js: '#!/usr/bin/env node' }
+        banner: { js: '#!/usr/bin/env node' },
+        loader: { '.html': 'text' }
       });
 
       fs.chmodSync(out, 0o755);

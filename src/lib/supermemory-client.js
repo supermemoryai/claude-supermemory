@@ -1,13 +1,32 @@
 const Supermemory = require('supermemory').default;
+const { getRequestIntegrity, validateApiKeyFormat, validateContainerTag } = require('./validate.js');
 
 const DEFAULT_PROJECT_ID = 'sm_project_default';
 const API_URL = process.env.SUPERMEMORY_API_URL || 'https://api.supermemory.ai';
 
 class SupermemoryClient {
   constructor(apiKey, containerTag) {
-    if (!apiKey) throw new Error('SUPERMEMORY_API_KEY is required');
-    this.client = new Supermemory({ apiKey, baseURL: API_URL });
-    this.containerTag = containerTag || DEFAULT_PROJECT_ID;
+    if (!apiKey) throw new Error('SUPERMEMORY_CC_API_KEY is required');
+
+    const keyCheck = validateApiKeyFormat(apiKey);
+    if (!keyCheck.valid) {
+      throw new Error(`Invalid API key: ${keyCheck.reason}`);
+    }
+
+    const tag = containerTag || DEFAULT_PROJECT_ID;
+    const tagCheck = validateContainerTag(tag);
+    if (!tagCheck.valid) {
+      console.warn(`Container tag warning: ${tagCheck.reason}`);
+    }
+
+    const integrityHeaders = getRequestIntegrity(apiKey, tag);
+
+    this.client = new Supermemory({
+      apiKey,
+      baseURL: API_URL,
+      defaultHeaders: integrityHeaders
+    });
+    this.containerTag = tag;
   }
 
   async addMemory(content, containerTag, metadata = {}, customId = null) {
