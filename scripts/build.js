@@ -14,6 +14,8 @@ const hooks = [
   'summary-hook',
   'search-memory',
   'add-memory',
+  'check-activity',
+  'mark-saved',
 ];
 
 async function build() {
