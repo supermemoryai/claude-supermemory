@@ -9,54 +9,17 @@ async function main() {
 
   try {
     const input = await readStdin();
-    const cwd = input.cwd || process.cwd();
     const sessionId = input.session_id;
-    const transcriptPath = input.transcript_path;
 
-    debugLog(settings, 'Stop', { sessionId, transcriptPath });
+    debugLog(settings, 'Stop hook disabled — using save-memory skill for curated saves', { sessionId });
 
-    if (!transcriptPath || !sessionId) {
-      debugLog(settings, 'Missing transcript path or session id');
-      writeOutput({ continue: true });
-      return;
-    }
-
-    let apiKey;
-    try {
-      apiKey = getApiKey(settings);
-    } catch {
-      writeOutput({ continue: true });
-      return;
-    }
-
-    const formatted = formatNewEntries(transcriptPath, sessionId);
-
-    if (!formatted) {
-      debugLog(settings, 'No new content to save');
-      writeOutput({ continue: true });
-      return;
-    }
-
-    const client = new SupermemoryClient(apiKey);
-    const containerTag = getContainerTag(cwd);
-    const projectName = getProjectName(cwd);
-
-    await client.addMemory(
-      formatted,
-      containerTag,
-      {
-        type: 'session_turn',
-        project: projectName,
-        timestamp: new Date().toISOString(),
-      },
-      sessionId,
-    );
-
-    debugLog(settings, 'Session turn saved', { length: formatted.length });
+    // The Stop hook previously dumped full session transcripts (80KB+) into
+    // Supermemory, creating noisy low-quality memories. This has been replaced
+    // by the save-memory skill, which lets Claude extract structured memories
+    // with user approval during the session.
     writeOutput({ continue: true });
   } catch (err) {
     debugLog(settings, 'Error', { error: err.message });
-    console.error(`Supermemory: ${err.message}`);
     writeOutput({ continue: true });
   }
 }
