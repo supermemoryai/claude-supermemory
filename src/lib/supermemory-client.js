@@ -94,8 +94,10 @@ class SupermemoryClient {
   }
 
   async listMemories(containerTag, limit = 20) {
+    const tag = containerTag || this.containerTag;
+    const tags = Array.isArray(tag) ? tag : [tag];
     const result = await this.client.memories.list({
-      containerTags: containerTag || this.containerTag,
+      containerTags: tags,
       limit,
       order: 'desc',
       sort: 'createdAt',

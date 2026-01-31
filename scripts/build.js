@@ -14,6 +14,12 @@ const hooks = [
   'summary-hook',
   'search-memory',
   'add-memory',
+  'check-activity',
+  'mark-saved',
+  'list-memories',
+  'delete-memory',
+  'dump-profile',
+  'get-memory',
 ];
 
 async function build() {
