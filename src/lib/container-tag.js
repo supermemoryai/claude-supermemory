@@ -1,6 +1,7 @@
 const { execSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const { loadSettings } = require('./settings');
+const { validateContainerTag } = require('./validate');
 
 function sha256(input) {
   return crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
@@ -23,18 +24,11 @@ function getContainerTag(cwd) {
   // Check for configured container tag (env var or settings file)
   const settings = loadSettings();
   if (settings.containerTag) {
-    // Validate the configured tag
-    if (typeof settings.containerTag !== 'string' || settings.containerTag.length === 0) {
-      console.warn('Supermemory: containerTag is invalid, falling back to auto-derived');
-    } else if (settings.containerTag.length > 100) {
-      console.warn('Supermemory: containerTag exceeds 100 characters, falling back to auto-derived');
-    } else if (!/^[a-zA-Z0-9_-]+$/.test(settings.containerTag)) {
-      console.warn('Supermemory: containerTag contains invalid characters, falling back to auto-derived');
-    } else if (/^[-_]|[-_]$/.test(settings.containerTag)) {
-      console.warn('Supermemory: containerTag must not start or end with - or _, falling back to auto-derived');
-    } else {
+    const validation = validateContainerTag(settings.containerTag);
+    if (validation.valid) {
       return settings.containerTag;
     }
+    console.warn(`Supermemory: containerTag ${validation.reason}, falling back to auto-derived`);
   }
 
   // Fall back to auto-derived tag
