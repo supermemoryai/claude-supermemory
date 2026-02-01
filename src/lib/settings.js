@@ -9,6 +9,7 @@ const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
 const DEFAULT_SETTINGS = {
   skipTools: ['Read', 'Glob', 'Grep', 'TodoWrite', 'AskUserQuestion'],
   captureTools: ['Edit', 'Write', 'Bash', 'Task'],
+  containerTag: null,
   maxProfileItems: 5,
   debug: false,
   injectProfile: true,
@@ -37,6 +38,8 @@ function loadSettings() {
       (s) => s.trim(),
     );
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
+  if (process.env.SUPERMEMORY_CONTAINER_TAG)
+    settings.containerTag = process.env.SUPERMEMORY_CONTAINER_TAG.trim();
   return settings;
 }
 

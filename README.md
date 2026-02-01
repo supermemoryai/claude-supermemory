@@ -87,7 +87,8 @@ Log out from Supermemory and clear saved credentials.
 SUPERMEMORY_CC_API_KEY=sm_...
 
 # Optional
-SUPERMEMORY_SKIP_TOOLS=Read,Glob,Grep    # Tools to not capture
+SUPERMEMORY_CONTAINER_TAG=my-project      # Custom container tag (overrides auto-derived)
+SUPERMEMORY_SKIP_TOOLS=Read,Glob,Grep     # Tools to not capture
 SUPERMEMORY_DEBUG=true                    # Enable debug logging
 ```
 
@@ -97,12 +98,15 @@ Create `~/.supermemory-claude/settings.json`:
 
 ```json
 {
+  "containerTag": "my-project",
   "skipTools": ["Read", "Glob", "Grep", "TodoWrite"],
   "captureTools": ["Edit", "Write", "Bash", "Task"],
   "maxProfileItems": 5,
   "debug": false
 }
 ```
+
+**Note:** Environment variables take precedence over settings file values.
 
 ## License
 
