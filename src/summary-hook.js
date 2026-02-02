@@ -29,7 +29,7 @@ async function main() {
       return;
     }
 
-    const formatted = formatNewEntries(transcriptPath, sessionId);
+    const formatted = formatNewEntries(transcriptPath, sessionId, settings);
 
     if (!formatted) {
       debugLog(settings, 'No new content to save');

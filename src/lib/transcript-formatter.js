@@ -1,9 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { shouldCaptureTool } = require('./settings');
 
 const MAX_TOOL_RESULT_LENGTH = 500;
-const SKIP_RESULT_TOOLS = ['Read'];
 const TRACKER_DIR = path.join(os.homedir(), '.supermemory-claude', 'trackers');
 
 let toolUseMap = new Map();
@@ -69,21 +69,21 @@ function getEntriesSinceLastCapture(entries, lastCapturedUuid) {
   return newEntries;
 }
 
-function formatEntry(entry) {
+function formatEntry(entry, settings) {
   const parts = [];
 
   if (entry.type === 'user') {
-    const formatted = formatUserMessage(entry.message);
+    const formatted = formatUserMessage(entry.message, settings);
     if (formatted) parts.push(formatted);
   } else if (entry.type === 'assistant') {
-    const formatted = formatAssistantMessage(entry.message);
+    const formatted = formatAssistantMessage(entry.message, settings);
     if (formatted) parts.push(formatted);
   }
 
   return parts.join('\n');
 }
 
-function formatUserMessage(message) {
+function formatUserMessage(message, settings) {
   if (!message?.content) return null;
 
   const content = message.content;
@@ -104,7 +104,7 @@ function formatUserMessage(message) {
       } else if (block.type === 'tool_result') {
         const toolId = block.tool_use_id || '';
         const toolName = toolUseMap.get(toolId) || 'Unknown';
-        if (SKIP_RESULT_TOOLS.includes(toolName)) {
+        if (!shouldCaptureTool(toolName, settings)) {
           continue;
         }
         const resultContent = truncate(
@@ -124,7 +124,7 @@ function formatUserMessage(message) {
   return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
-function formatAssistantMessage(message) {
+function formatAssistantMessage(message, settings) {
   if (!message?.content) return null;
 
   const content = message.content;
@@ -143,6 +143,14 @@ function formatAssistantMessage(message) {
     } else if (block.type === 'tool_use') {
       const toolName = block.name || 'Unknown';
       const toolId = block.id || '';
+      // Only capture tool_use if the tool should be captured
+      if (!shouldCaptureTool(toolName, settings)) {
+        // Still track the tool ID for mapping, but don't add to output
+        if (toolId) {
+          toolUseMap.set(toolId, toolName);
+        }
+        continue;
+      }
       const input = block.input || {};
       const inputLines = formatToolInput(input);
       parts.push(`[tool:${toolName}]\n${inputLines}\n[tool:end]`);
@@ -179,7 +187,7 @@ function truncate(text, maxLength) {
   return `${text.slice(0, maxLength)}...`;
 }
 
-function formatNewEntries(transcriptPath, sessionId) {
+function formatNewEntries(transcriptPath, sessionId, settings) {
   toolUseMap = new Map();
 
   const entries = parseTranscript(transcriptPath);
@@ -199,7 +207,7 @@ function formatNewEntries(transcriptPath, sessionId) {
   formattedParts.push(`[turn:start timestamp="${timestamp}"]`);
 
   for (const entry of newEntries) {
-    const formatted = formatEntry(entry);
+    const formatted = formatEntry(entry, settings);
     if (formatted) {
       formattedParts.push(formatted);
     }
