@@ -2,7 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { exec } = require('node:child_process');
+const { execFile } = require('node:child_process');
 
 const authSuccessHtml = require('../templates/auth-success.html');
 const authErrorHtml = require('../templates/auth-error.html');
@@ -50,13 +50,12 @@ function clearCredentials() {
 }
 
 function openBrowser(url) {
-  const cmd =
-    process.platform === 'darwin'
-      ? 'open'
-      : process.platform === 'win32'
-        ? 'start'
-        : 'xdg-open';
-  exec(`${cmd} "${url}"`);
+  if (process.platform === 'win32') {
+    execFile('cmd', ['/c', 'start', url]);
+  } else {
+    const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+    execFile(cmd, [url]);
+  }
 }
 
 function startAuthFlow() {
