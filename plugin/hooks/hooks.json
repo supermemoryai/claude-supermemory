@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/context-hook.cjs",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/context-hook.cjs\"",
             "timeout": 30
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/summary-hook.cjs",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/summary-hook.cjs\"",
             "timeout": 30
           }
         ]
@@ -25,3 +25,4 @@
     ]
   }
 }
+
