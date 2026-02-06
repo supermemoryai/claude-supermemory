@@ -51,10 +51,11 @@ function clearCredentials() {
 
 function openBrowser(url) {
   if (process.platform === 'win32') {
-    execFile('cmd', ['/c', 'start', url]);
+    execFile('explorer.exe', [url]);
+  } else if (process.platform === 'darwin') {
+    execFile('open', [url]);
   } else {
-    const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
-    execFile(cmd, [url]);
+    execFile('xdg-open', [url]);
   }
 }
 
