@@ -50,12 +50,16 @@ function clearCredentials() {
 }
 
 function openBrowser(url) {
+  const onError = (err) => {
+    if (err) console.warn('Failed to open browser:', err.message);
+  };
   if (process.platform === 'win32') {
-    execFile('explorer.exe', [url]);
+    // cmd /c start "" url preserves query params; execFile avoids shell interpolation
+    execFile('cmd.exe', ['/c', 'start', '', url], { windowsHide: true }, onError);
   } else if (process.platform === 'darwin') {
-    execFile('open', [url]);
+    execFile('open', [url], onError);
   } else {
-    execFile('xdg-open', [url]);
+    execFile('xdg-open', [url], onError);
   }
 }
 
