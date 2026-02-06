@@ -54,7 +54,6 @@ function openBrowser(url) {
     if (err) console.warn('Failed to open browser:', err.message);
   };
   if (process.platform === 'win32') {
-    // cmd /c start "" url preserves query params; execFile avoids shell interpolation
     execFile('cmd.exe', ['/c', 'start', '', url], { windowsHide: true }, onError);
   } else if (process.platform === 'darwin') {
     execFile('open', [url], onError);
