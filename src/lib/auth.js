@@ -2,7 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { exec } = require('node:child_process');
+const { execFile } = require('node:child_process');
 
 const authSuccessHtml = require('../templates/auth-success.html');
 const authErrorHtml = require('../templates/auth-error.html');
@@ -50,13 +50,16 @@ function clearCredentials() {
 }
 
 function openBrowser(url) {
-  const cmd =
-    process.platform === 'darwin'
-      ? 'open'
-      : process.platform === 'win32'
-        ? 'start'
-        : 'xdg-open';
-  exec(`${cmd} "${url}"`);
+  const onError = (err) => {
+    if (err) console.warn('Failed to open browser:', err.message);
+  };
+  if (process.platform === 'win32') {
+    execFile('explorer.exe', [url], onError);
+  } else if (process.platform === 'darwin') {
+    execFile('open', [url], onError);
+  } else {
+    execFile('xdg-open', [url], onError);
+  }
 }
 
 function startAuthFlow() {
