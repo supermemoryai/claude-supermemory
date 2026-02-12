@@ -1,22 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { execSync } = require('node:child_process');
+const { getGitRoot } = require('./git-utils');
 
 const CONFIG_DIR = path.join('.claude', '.supermemory-claude');
 const CONFIG_FILE = 'config.json';
-
-function getGitRoot(cwd) {
-  try {
-    const gitRoot = execSync('git rev-parse --show-toplevel', {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    return gitRoot || null;
-  } catch {
-    return null;
-  }
-}
 
 function getConfigPath(cwd) {
   const gitRoot = getGitRoot(cwd);
