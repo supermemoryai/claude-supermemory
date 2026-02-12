@@ -1,22 +1,10 @@
 const { execSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const { loadProjectConfig } = require('./project-config');
+const { getGitRoot } = require('./git-utils');
 
 function sha256(input) {
   return crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
-}
-
-function getGitRoot(cwd) {
-  try {
-    const gitRoot = execSync('git rev-parse --show-toplevel', {
-      cwd,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    return gitRoot || null;
-  } catch {
-    return null;
-  }
 }
 
 function getGitRepoName(cwd) {
