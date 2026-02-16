@@ -2,6 +2,7 @@ const { execSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const { loadProjectConfig } = require('./project-config');
 const { getGitRoot } = require('./git-utils');
+const { loadGlobalSettings } = require('./global-settings');
 
 function sha256(input) {
   return crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
@@ -22,10 +23,24 @@ function getGitRepoName(cwd) {
 }
 
 function getContainerTag(cwd) {
+  // 1. Check project config
   const projectConfig = loadProjectConfig(cwd);
   if (projectConfig?.personalContainerTag) {
     return projectConfig.personalContainerTag;
   }
+
+  // 2. Check environment variable
+  if (process.env.SUPERMEMORY_CONTAINER_TAG) {
+    return process.env.SUPERMEMORY_CONTAINER_TAG;
+  }
+
+  // 3. Check global settings
+  const globalSettings = loadGlobalSettings();
+  if (globalSettings?.personalContainerTag) {
+    return globalSettings.personalContainerTag;
+  }
+
+  // 4. Fallback to git-path hash
   const gitRoot = getGitRoot(cwd);
   const basePath = gitRoot || cwd;
   return `claudecode_project_${sha256(basePath)}`;
