@@ -6,6 +6,7 @@ const {
 } = require('./lib/container-tag');
 const { loadSettings, getApiKey } = require('./lib/settings');
 const { formatSearchResults } = require('./lib/format-context');
+const { getUserFriendlyError } = require('./lib/error-helpers');
 
 function parseArgs(args) {
   let containerType = 'both';
@@ -85,7 +86,7 @@ async function main() {
       console.log(formatSearchResults(query, searchResult.results, label));
     }
   } catch (err) {
-    console.log(`Error searching memories: ${err.message}`);
+    console.log(`Error searching memories: ${getUserFriendlyError(err)}`);
   }
 }
 
