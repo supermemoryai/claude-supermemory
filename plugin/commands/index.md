@@ -45,6 +45,8 @@ Use this table based on the ecosystem(s) detected in Phase 0. For each phase, lo
 | **Java/Kotlin** | `pom.xml`, `build.gradle`, `build.gradle.kts`, `settings.gradle*` | `application.properties`, `application.yml`, `logback.xml` |
 | **Ruby** | `Gemfile`, `Gemfile.lock`, `*.gemspec` | `config/database.yml`, `config/routes.rb`, `.rubocop.yml` |
 | **PHP** | `composer.json`, `composer.lock` | `.env`, `config/*.php`, `phpunit.xml` |
+| **Swift** | `Package.swift`, `*.xcodeproj`, `*.xcworkspace` | `Info.plist`, `.swiftlint.yml`, `*.xcconfig` |
+| **Elixir** | `mix.exs`, `mix.lock` | `config/config.exs`, `config/runtime.exs`, `.formatter.exs`, `.credo.exs` |
 
 ### Entry Points & Architecture (Phase 2)
 
@@ -58,6 +60,8 @@ Use this table based on the ecosystem(s) detected in Phase 0. For each phase, lo
 | **Java/Kotlin** | `*Application.java`, `Main.java`, `App.kt` | `@SpringBootApplication`, `@RestController`, `@Service`, `@Repository` annotations, dependency injection |
 | **Ruby** | `config.ru`, `app/controllers/application_controller.rb` | Rails MVC structure (`app/models`, `app/controllers`, `app/views`), routes, migrations, gems |
 | **PHP** | `public/index.php`, `artisan` | Laravel service providers, routes (`routes/web.php`, `routes/api.php`), Eloquent models, middleware |
+| **Swift** | `Sources/*/main.swift`, `App.swift`, `*App.swift` | SwiftUI `@main` app struct, UIKit `AppDelegate`/`SceneDelegate`, SPM targets in `Package.swift`, module structure under `Sources/` |
+| **Elixir** | `lib/*/application.ex`, `lib/*_web/endpoint.ex` | OTP supervision trees, Phoenix endpoint/router/controllers, Ecto schemas and repos, GenServer modules, context modules |
 
 ### Conventions & Patterns (Phase 3)
 
@@ -71,6 +75,8 @@ Use this table based on the ecosystem(s) detected in Phase 0. For each phase, lo
 | **Java/Kotlin** | Package hierarchy, annotation usage, builder patterns, DTO/entity separation |
 | **Ruby** | Rails conventions (CoC), concern modules, service objects, RSpec vs Minitest |
 | **PHP** | PSR standards, namespace structure, facade usage, artisan commands |
+| **Swift** | Protocol-oriented design, `@Observable`/`@State`/`@Binding` patterns, access control (`public`/`internal`/`private`), Swift concurrency (`async`/`await`/`actor`) |
+| **Elixir** | `use`/`import`/`alias` conventions, pipe operator chains, pattern matching in function heads, context-based module organization (Phoenix contexts), test structure (`test/`) |
 
 ### Key Files to Read (Phase 4)
 
@@ -84,6 +90,8 @@ Use this table based on the ecosystem(s) detected in Phase 0. For each phase, lo
 | **Java/Kotlin** | Security config, JPA entities, repository interfaces, service layer, exception handlers |
 | **Ruby** | ApplicationController, model validations/callbacks, initializers, service objects, background jobs |
 | **PHP** | Service providers, form requests, policies, event/listener pairs, scheduled tasks |
+| **Swift** | Protocol definitions, view models, network/API layer, Core Data / SwiftData models, dependency injection setup, `Package.swift` target dependencies |
+| **Elixir** | `Application` module (supervision tree), `Repo` module (Ecto), router and pipeline definitions, context modules with public API functions, migration files, LiveView modules |
 
 ---
 
@@ -139,7 +147,7 @@ Include: detected ecosystem, tech stack, architecture, conventions, key files, i
 ## Instructions
 
 - Make ~20-50 tool calls to explore thoroughly
-- Skip dependency/package folders (`node_modules`, `bin`, `obj`, `target`, `vendor`, `__pycache__`, `.gradle`, `build`), generated files, and lock files
+- Skip dependency/package folders (`node_modules`, `bin`, `obj`, `target`, `vendor`, `__pycache__`, `.gradle`, `build`, `.build`, `_build`, `deps`), generated files, and lock files
 - Compile all findings at the end into one save
 
 Start now.
