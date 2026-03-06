@@ -46,7 +46,7 @@ async function main() {
     console.log(
       'Set SUPERMEMORY_CC_API_KEY environment variable to enable memory search.',
     );
-    console.log('Get your key at: https://console.supermemory.ai');
+    console.log('Get your key at: https://app.supermemory.ai');
     return;
   }
 

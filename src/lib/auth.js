@@ -11,8 +11,7 @@ const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
 
 const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL ||
-  'https://console.supermemory.ai/auth/connect';
+  process.env.SUPERMEMORY_AUTH_URL || 'https://app.supermemory.ai/auth/connect';
 const AUTH_PORT = 19876;
 const AUTH_TIMEOUT = 25000;
 
@@ -112,6 +111,7 @@ function startAuthFlow() {
 }
 
 module.exports = {
+  AUTH_BASE_URL,
   CREDENTIALS_FILE,
   loadCredentials,
   saveCredentials,

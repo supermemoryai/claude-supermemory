@@ -6,7 +6,7 @@ const {
 } = require('./lib/container-tag');
 const { loadSettings, getApiKey, debugLog } = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
-const { startAuthFlow } = require('./lib/auth');
+const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
 
 async function main() {
@@ -34,7 +34,7 @@ async function main() {
             hookEventName: 'SessionStart',
             additionalContext: `<supermemory-status>
 ${isTimeout ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
-If the browser did not open, visit: https://console.supermemory.ai/auth/connect
+If the browser did not open, visit: ${AUTH_BASE_URL}
 Or set SUPERMEMORY_CC_API_KEY environment variable manually.
 </supermemory-status>`,
           },
