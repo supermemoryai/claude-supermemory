@@ -14,6 +14,7 @@ const {
   formatNewEntries,
   formatSignalEntries,
 } = require('./lib/transcript-formatter');
+const { getUserFriendlyError } = require('./lib/error-helpers');
 
 async function main() {
   const settings = loadSettings();
@@ -79,8 +80,9 @@ async function main() {
     debugLog(settings, 'Session turn saved', { length: formatted.length });
     writeOutput({ continue: true });
   } catch (err) {
-    debugLog(settings, 'Error', { error: err.message });
-    console.error(`Supermemory: ${err.message}`);
+    const friendly = getUserFriendlyError(err);
+    debugLog(settings, 'Error', { error: friendly });
+    console.error(`Supermemory: ${friendly}`);
     writeOutput({ continue: true });
   }
 }

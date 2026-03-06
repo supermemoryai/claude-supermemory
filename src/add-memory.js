@@ -4,6 +4,7 @@ const {
 } = require('./lib/supermemory-client');
 const { getContainerTag, getProjectName } = require('./lib/container-tag');
 const { loadSettings, getApiKey } = require('./lib/settings');
+const { getUserFriendlyError } = require('./lib/error-helpers');
 
 async function main() {
   const content = process.argv.slice(2).join(' ');
@@ -46,7 +47,7 @@ async function main() {
     console.log(`Memory saved to project: ${projectName}`);
     console.log(`ID: ${result.id}`);
   } catch (err) {
-    console.log(`Error saving memory: ${err.message}`);
+    console.log(`Error saving memory: ${getUserFriendlyError(err)}`);
   }
 }
 
