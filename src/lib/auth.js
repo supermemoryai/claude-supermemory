@@ -49,6 +49,17 @@ function clearCredentials() {
 }
 
 function openBrowser(url) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      console.warn('Failed to open browser: Invalid URL protocol');
+      return;
+    }
+  } catch {
+    console.warn('Failed to open browser: Invalid URL');
+    return;
+  }
   const onError = (err) => {
     if (err) console.warn('Failed to open browser:', err.message);
   };
