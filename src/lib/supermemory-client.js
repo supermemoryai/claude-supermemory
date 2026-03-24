@@ -73,12 +73,17 @@ class SupermemoryClient {
     }
 
     const integrityHeaders = getRequestIntegrity(apiKey, tag);
+    const defaultHeaders = {
+      ...integrityHeaders,
+      'x-api-key': apiKey,
+    };
 
     this.client = new Supermemory({
       apiKey,
       baseURL: API_URL,
-      defaultHeaders: integrityHeaders,
+      defaultHeaders,
     });
+    this.client.authHeaders = async () => ({ 'x-api-key': apiKey });
     this.containerTag = tag;
   }
 
