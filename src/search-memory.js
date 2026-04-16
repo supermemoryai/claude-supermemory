@@ -1,12 +1,11 @@
-const { SupermemoryClient } = require('./lib/supermemory-client');
+const { LocalMemoryClient } = require('./lib/local-memory-client');
 const {
   getProjectName,
   getContainerTag,
   getRepoContainerTag,
 } = require('./lib/container-tag');
-const { loadSettings, getApiKey } = require('./lib/settings');
+const { loadSettings } = require('./lib/settings');
 const { formatSearchResults } = require('./lib/format-context');
-const { getUserFriendlyError } = require('./lib/error-helpers');
 
 function parseArgs(args) {
   let containerType = 'both';
@@ -37,27 +36,13 @@ async function main() {
     return;
   }
 
-  const settings = loadSettings();
-
-  let apiKey;
-  try {
-    apiKey = getApiKey(settings);
-  } catch {
-    console.log('Supermemory API key not configured.');
-    console.log(
-      'Set SUPERMEMORY_CC_API_KEY environment variable to enable memory search.',
-    );
-    console.log('Get your key at: https://app.supermemory.ai');
-    return;
-  }
-
   const cwd = process.cwd();
   const projectName = getProjectName(cwd);
   const personalTag = getContainerTag(cwd);
   const repoTag = getRepoContainerTag(cwd);
 
   try {
-    const client = new SupermemoryClient(apiKey, personalTag);
+    const client = new LocalMemoryClient(personalTag);
 
     console.log(`Project: ${projectName}\n`);
 
@@ -86,7 +71,7 @@ async function main() {
       console.log(formatSearchResults(query, searchResult.results, label));
     }
   } catch (err) {
-    console.log(`Error searching memories: ${getUserFriendlyError(err)}`);
+    console.log(`Error searching memories: ${err.message}`);
   }
 }
 

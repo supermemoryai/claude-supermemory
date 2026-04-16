@@ -1,7 +1,7 @@
 {
-  "name": "claude-supermemory-dev",
-  "version": "2.0.1",
-  "description": "Claude code plugin by Supermemory AI",
+  "name": "claude-supermemory-local",
+  "version": "3.0.0-local",
+  "description": "Claude Code persistent memory plugin — local file storage fork",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -18,7 +18,5 @@
     "@biomejs/biome": "^2.3.13",
     "esbuild": "^0.25.0"
   },
-  "dependencies": {
-    "supermemory": "^4.0.0"
-  }
+  "dependencies": {}
 }
