@@ -1,11 +1,10 @@
 const {
-  SupermemoryClient,
+  LocalMemoryClient,
   PERSONAL_ENTITY_CONTEXT,
-} = require('./lib/supermemory-client');
+} = require('./lib/local-memory-client');
 const { getContainerTag, getProjectName } = require('./lib/container-tag');
 const {
   loadSettings,
-  getApiKey,
   debugLog,
   getSignalConfig,
 } = require('./lib/settings');
@@ -14,7 +13,6 @@ const {
   formatNewEntries,
   formatSignalEntries,
 } = require('./lib/transcript-formatter');
-const { getUserFriendlyError } = require('./lib/error-helpers');
 
 async function main() {
   const settings = loadSettings();
@@ -29,14 +27,6 @@ async function main() {
 
     if (!transcriptPath || !sessionId) {
       debugLog(settings, 'Missing transcript path or session id');
-      writeOutput({ continue: true });
-      return;
-    }
-
-    let apiKey;
-    try {
-      apiKey = getApiKey(settings);
-    } catch {
       writeOutput({ continue: true });
       return;
     }
@@ -62,7 +52,7 @@ async function main() {
       return;
     }
 
-    const client = new SupermemoryClient(apiKey);
+    const client = new LocalMemoryClient();
     const containerTag = getContainerTag(cwd);
     const projectName = getProjectName(cwd);
 
@@ -74,20 +64,18 @@ async function main() {
         project: projectName,
         timestamp: new Date().toISOString(),
       },
-      { customId: sessionId, entityContext: PERSONAL_ENTITY_CONTEXT },
     );
 
     debugLog(settings, 'Session turn saved', { length: formatted.length });
     writeOutput({ continue: true });
   } catch (err) {
-    const friendly = getUserFriendlyError(err);
-    debugLog(settings, 'Error', { error: friendly });
-    console.error(`Supermemory: ${friendly}`);
+    debugLog(settings, 'Error', { error: err.message });
+    console.error(`Supermemory-local: ${err.message}`);
     writeOutput({ continue: true });
   }
 }
 
 main().catch((err) => {
-  console.error(`Supermemory fatal: ${err.message}`);
+  console.error(`Supermemory-local fatal: ${err.message}`);
   process.exit(1);
 });

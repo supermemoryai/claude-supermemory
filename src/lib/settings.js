@@ -1,15 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { loadCredentials } = require('./auth');
 const { loadProjectConfig } = require('./project-config');
 
 const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
 
-// Available tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch,
-// Task, TaskOutput, TodoWrite, AskUserQuestion, ExitPlanMode, NotebookEdit,
-// LSP, MCPSearch, KillShell, Skill, EnterPlanMode
 const DEFAULT_SETTINGS = {
   includeTools: [],
   maxProfileItems: 5,
@@ -54,8 +50,6 @@ function loadSettings() {
   } catch (err) {
     console.error(`Settings: Failed to load ${SETTINGS_FILE}: ${err.message}`);
   }
-  if (process.env.SUPERMEMORY_CC_API_KEY)
-    settings.apiKey = process.env.SUPERMEMORY_CC_API_KEY;
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
   return settings;
 }
@@ -63,22 +57,7 @@ function loadSettings() {
 function saveSettings(settings) {
   ensureSettingsDir();
   const toSave = { ...settings };
-  delete toSave.apiKey;
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(toSave, null, 2));
-}
-
-function getApiKey(settings, cwd) {
-  if (settings.apiKey) return settings.apiKey;
-  if (process.env.SUPERMEMORY_CC_API_KEY)
-    return process.env.SUPERMEMORY_CC_API_KEY;
-
-  const projectConfig = loadProjectConfig(cwd || process.cwd());
-  if (projectConfig?.apiKey) return projectConfig.apiKey;
-
-  const credentials = loadCredentials();
-  if (credentials?.apiKey) return credentials.apiKey;
-
-  throw new Error('NO_API_KEY');
 }
 
 function debugLog(settings, message, data) {
@@ -139,7 +118,6 @@ module.exports = {
   DEFAULT_SETTINGS,
   loadSettings,
   saveSettings,
-  getApiKey,
   debugLog,
   getIncludeTools,
   shouldIncludeTool,

@@ -1,14 +1,12 @@
-const { SupermemoryClient } = require('./lib/supermemory-client');
+const { LocalMemoryClient } = require('./lib/local-memory-client');
 const {
   getContainerTag,
   getRepoContainerTag,
   getProjectName,
 } = require('./lib/container-tag');
-const { loadSettings, getApiKey, debugLog } = require('./lib/settings');
+const { loadSettings, debugLog } = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
-const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
-const { getUserFriendlyError, isBenignError } = require('./lib/error-helpers');
 
 async function main() {
   const settings = loadSettings();
@@ -20,62 +18,15 @@ async function main() {
 
     debugLog(settings, 'SessionStart', { cwd, projectName });
 
-    let apiKey;
-    try {
-      apiKey = getApiKey(settings);
-    } catch {
-      try {
-        debugLog(settings, 'No API key found, starting browser auth flow');
-        apiKey = await startAuthFlow();
-        debugLog(settings, 'Auth flow completed successfully');
-      } catch (authErr) {
-        const isTimeout = authErr.message === 'AUTH_TIMEOUT';
-        writeOutput({
-          hookSpecificOutput: {
-            hookEventName: 'SessionStart',
-            additionalContext: `<supermemory-status>
-${isTimeout ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
-If the browser did not open, visit: ${AUTH_BASE_URL}
-Or set SUPERMEMORY_CC_API_KEY environment variable manually.
-</supermemory-status>`,
-          },
-        });
-        return;
-      }
-    }
-
-    const client = new SupermemoryClient(apiKey);
+    const client = new LocalMemoryClient();
     const personalTag = getContainerTag(cwd);
     const repoTag = getRepoContainerTag(cwd);
 
     debugLog(settings, 'Fetching contexts', { personalTag, repoTag });
 
-    const apiErrors = [];
-
-    const handleProfileError = (label) => (err) => {
-      if (isBenignError(err)) {
-        debugLog(settings, `Benign error fetching ${label} context`, {
-          status: err.status,
-          message: err.message,
-        });
-        return null;
-      }
-      const friendly = getUserFriendlyError(err);
-      debugLog(settings, `Error fetching ${label} context`, {
-        status: err.status,
-        message: friendly,
-      });
-      apiErrors.push(friendly);
-      return null;
-    };
-
     const [personalResult, repoResult] = await Promise.all([
-      client
-        .getProfile(personalTag, projectName)
-        .catch(handleProfileError('personal')),
-      client
-        .getProfile(repoTag, projectName)
-        .catch(handleProfileError('repo')),
+      client.getProfile(personalTag, projectName, settings.maxProfileItems).catch(() => null),
+      client.getProfile(repoTag, projectName, settings.maxProfileItems).catch(() => null),
     ]);
 
     const personalContext = formatContext(
@@ -102,18 +53,11 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
       },
     ]);
 
-    const errorNotice =
-      apiErrors.length > 0
-        ? `<supermemory-status>\n${[...new Set(apiErrors)].join('\n')}\n</supermemory-status>\n`
-        : '';
-
     if (!additionalContext) {
       writeOutput({
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
-          additionalContext: apiErrors.length > 0
-            ? errorNotice
-            : `<supermemory-context>
+          additionalContext: `<supermemory-context>
 No previous memories found for this project.
 Memories will be saved as you work.
 </supermemory-context>`,
@@ -131,18 +75,17 @@ Memories will be saved as you work.
     writeOutput({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: errorNotice + additionalContext,
+        additionalContext,
       },
     });
   } catch (err) {
-    const friendly = getUserFriendlyError(err);
-    debugLog(settings, 'Error', { error: friendly });
-    console.error(`Supermemory: ${friendly}`);
+    debugLog(settings, 'Error', { error: err.message });
+    console.error(`Supermemory-local: ${err.message}`);
     writeOutput({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
         additionalContext: `<supermemory-status>
-Failed to load memories: ${friendly}
+Failed to load memories: ${err.message}
 Session will continue without memory context.
 </supermemory-status>`,
       },
@@ -151,6 +94,6 @@ Session will continue without memory context.
 }
 
 main().catch((err) => {
-  console.error(`Supermemory fatal: ${err.message}`);
+  console.error(`Supermemory-local fatal: ${err.message}`);
   process.exit(1);
 });
