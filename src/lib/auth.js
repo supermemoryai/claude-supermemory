@@ -12,7 +12,8 @@ const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
 
 const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL || 'https://console.supermemory.ai/auth/agent-connect';
+  process.env.SUPERMEMORY_AUTH_URL ||
+  'https://console.supermemory.ai/auth/agent-connect';
 const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 60000;
 
 function ensureDir() {
