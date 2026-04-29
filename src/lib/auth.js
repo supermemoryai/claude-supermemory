@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFile } = require('node:child_process');
+const { randomBytes } = require('node:crypto');
 
 const authSuccessHtml = require('../templates/auth-success.html');
 const authErrorHtml = require('../templates/auth-error.html');
@@ -11,9 +12,9 @@ const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
 
 const AUTH_BASE_URL =
-  process.env.SUPERMEMORY_AUTH_URL || 'https://app.supermemory.ai/auth/connect';
-const AUTH_PORT = 19876;
-const AUTH_TIMEOUT = 25000;
+  process.env.SUPERMEMORY_AUTH_URL ||
+  'https://console.supermemory.ai/auth/agent-connect';
+const AUTH_TIMEOUT = Number(process.env.SUPERMEMORY_AUTH_TIMEOUT) || 60000;
 
 function ensureDir() {
   if (!fs.existsSync(SETTINGS_DIR)) {
@@ -64,11 +65,19 @@ function openBrowser(url) {
 function startAuthFlow() {
   return new Promise((resolve, reject) => {
     let resolved = false;
+    const stateToken = randomBytes(16).toString('hex');
 
     const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://localhost:${AUTH_PORT}`);
+      const url = new URL(req.url, 'http://localhost');
 
       if (url.pathname === '/callback') {
+        const callbackState = url.searchParams.get('state');
+        if (callbackState !== stateToken) {
+          res.writeHead(403, { 'Content-Type': 'text/html' });
+          res.end(authErrorHtml);
+          return;
+        }
+
         const apiKey =
           url.searchParams.get('apikey') || url.searchParams.get('api_key');
 
@@ -77,6 +86,7 @@ function startAuthFlow() {
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end(authSuccessHtml);
           resolved = true;
+          clearTimeout(timer);
           server.close();
           resolve(apiKey);
         } else {
@@ -89,19 +99,31 @@ function startAuthFlow() {
       }
     });
 
-    server.listen(AUTH_PORT, '127.0.0.1', () => {
-      const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_BASE_URL}?callback=${encodeURIComponent(callbackUrl)}&client=claude_code`;
+    // Listen on an ephemeral port; embed state token in callback URL so the
+    // console redirects it back and the CSRF check passes.
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      const callbackUrl = `http://localhost:${port}/callback?state=${stateToken}`;
+      const params = new URLSearchParams({
+        callback: callbackUrl,
+        client: 'claude-code',
+        hostname: os.hostname(),
+        os: `${process.platform}-${os.arch()}`,
+        cwd: process.cwd(),
+        cli_version: '1.0.0',
+      });
+      const authUrl = `${AUTH_BASE_URL}?${params.toString()}`;
       openBrowser(authUrl);
     });
 
     server.on('error', (err) => {
       if (!resolved) {
+        clearTimeout(timer);
         reject(new Error(`Failed to start auth server: ${err.message}`));
       }
     });
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (!resolved) {
         server.close();
         reject(new Error('AUTH_TIMEOUT'));
