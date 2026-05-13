@@ -1,10 +1,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { loadCredentials } = require('./auth');
+const { loadCredentials, getAccessToken } = require('./auth');
 const { loadProjectConfig } = require('./project-config');
 
-const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
+const SETTINGS_DIR =
+  process.env.SUPERMEMORY_HOME_DIR ||
+  path.join(os.homedir(), '.supermemory-claude');
 const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
 
 // Available tools: Read, Write, Edit, Glob, Grep, Bash, WebSearch, WebFetch,
@@ -67,7 +69,7 @@ function saveSettings(settings) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(toSave, null, 2));
 }
 
-function getApiKey(settings, cwd) {
+async function getApiKey(settings, cwd) {
   if (settings.apiKey) return settings.apiKey;
   if (process.env.SUPERMEMORY_CC_API_KEY)
     return process.env.SUPERMEMORY_CC_API_KEY;
@@ -76,7 +78,11 @@ function getApiKey(settings, cwd) {
   if (projectConfig?.apiKey) return projectConfig.apiKey;
 
   const credentials = loadCredentials();
-  if (credentials?.apiKey) return credentials.apiKey;
+  if (credentials?.tokenType === 'apiKey') return credentials.apiKey;
+  if (credentials?.tokenType === 'oauth') {
+    const fresh = await getAccessToken();
+    if (fresh) return fresh;
+  }
 
   throw new Error('NO_API_KEY');
 }

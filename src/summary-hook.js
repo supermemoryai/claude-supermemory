@@ -35,7 +35,7 @@ async function main() {
 
     let apiKey;
     try {
-      apiKey = getApiKey(settings);
+      apiKey = await getApiKey(settings);
     } catch {
       writeOutput({ continue: true });
       return;

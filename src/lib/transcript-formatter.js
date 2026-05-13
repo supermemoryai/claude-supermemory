@@ -8,7 +8,11 @@ const {
 } = require('./settings');
 
 const MAX_TOOL_RESULT_LENGTH = 500;
-const TRACKER_DIR = path.join(os.homedir(), '.supermemory-claude', 'trackers');
+const TRACKER_DIR = path.join(
+  process.env.SUPERMEMORY_HOME_DIR ||
+    path.join(os.homedir(), '.supermemory-claude'),
+  'trackers',
+);
 
 let toolUseMap = new Map();
 let currentIncludeList = [];

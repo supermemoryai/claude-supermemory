@@ -57,13 +57,18 @@ EXAMPLES:
 | "We structure components like..." | "Component structure convention: [pattern]" |
 | "To add a new API route..." | "Adding API routes: [steps]" |`;
 
+const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const isJwt = (key) => typeof key === 'string' && JWT_SHAPE.test(key);
+
 class SupermemoryClient {
   constructor(apiKey, containerTag) {
     if (!apiKey) throw new Error('SUPERMEMORY_CC_API_KEY is required');
 
-    const keyCheck = validateApiKeyFormat(apiKey);
-    if (!keyCheck.valid) {
-      throw new Error(`Invalid API key: ${keyCheck.reason}`);
+    if (!isJwt(apiKey)) {
+      const keyCheck = validateApiKeyFormat(apiKey);
+      if (!keyCheck.valid) {
+        throw new Error(`Invalid API key: ${keyCheck.reason}`);
+      }
     }
 
     const tag = containerTag || DEFAULT_PROJECT_ID;

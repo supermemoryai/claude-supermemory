@@ -41,7 +41,7 @@ async function main() {
 
   let apiKey;
   try {
-    apiKey = getApiKey(settings);
+    apiKey = await getApiKey(settings);
   } catch {
     console.log('Supermemory API key not configured.');
     console.log(

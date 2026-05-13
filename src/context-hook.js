@@ -22,7 +22,7 @@ async function main() {
 
     let apiKey;
     try {
-      apiKey = getApiKey(settings);
+      apiKey = await getApiKey(settings);
     } catch {
       try {
         debugLog(settings, 'No API key found, starting browser auth flow');
@@ -73,9 +73,7 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
       client
         .getProfile(personalTag, projectName)
         .catch(handleProfileError('personal')),
-      client
-        .getProfile(repoTag, projectName)
-        .catch(handleProfileError('repo')),
+      client.getProfile(repoTag, projectName).catch(handleProfileError('repo')),
     ]);
 
     const personalContext = formatContext(
@@ -111,9 +109,10 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
       writeOutput({
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
-          additionalContext: apiErrors.length > 0
-            ? errorNotice
-            : `<supermemory-context>
+          additionalContext:
+            apiErrors.length > 0
+              ? errorNotice
+              : `<supermemory-context>
 No previous memories found for this project.
 Memories will be saved as you work.
 </supermemory-context>`,

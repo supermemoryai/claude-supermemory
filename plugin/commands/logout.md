@@ -9,9 +9,9 @@ Remove saved Supermemory credentials to allow re-authentication.
 
 ## Steps
 
-1. Use Bash to remove the credentials file:
+1. Use Bash to remove the credentials file (honors `SUPERMEMORY_HOME_DIR` for sideloaded local plugins):
    ```bash
-   rm -f ~/.supermemory-claude/credentials.json
+   rm -f "${SUPERMEMORY_HOME_DIR:-$HOME/.supermemory-claude}/credentials.json"
    ```
 
 2. Confirm to the user:
