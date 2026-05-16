@@ -4,31 +4,35 @@ const {
   getContainerTag,
   getRepoContainerTag,
 } = require('./lib/container-tag');
-const { loadSettings, getApiKey } = require('./lib/settings');
+const { loadSettings, getApiKey, validateContainerTag } = require('./lib/settings');
 const { formatSearchResults } = require('./lib/format-context');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 
 function parseArgs(args) {
   let containerType = 'both';
+  let containerTag = null;
   const queryParts = [];
 
-  for (const arg of args) {
-    if (arg === '--user') {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--user') {
       containerType = 'user';
-    } else if (arg === '--repo') {
+    } else if (args[i] === '--repo') {
       containerType = 'repo';
-    } else if (arg === '--both') {
+    } else if (args[i] === '--both') {
       containerType = 'both';
+    } else if (args[i] === '--container' && i + 1 < args.length) {
+      containerTag = args[++i];
+      containerType = 'custom';
     } else {
-      queryParts.push(arg);
+      queryParts.push(args[i]);
     }
   }
 
-  return { containerType, query: queryParts.join(' ') };
+  return { containerType, query: queryParts.join(' '), containerTag };
 }
 
 async function main() {
-  const { containerType, query } = parseArgs(process.argv.slice(2));
+  const { containerType, query, containerTag } = parseArgs(process.argv.slice(2));
 
   if (!query || !query.trim()) {
     console.log(
@@ -52,6 +56,15 @@ async function main() {
   }
 
   const cwd = process.cwd();
+
+  if (containerTag) {
+    const validationError = validateContainerTag(containerTag, cwd);
+    if (validationError) {
+      console.log(validationError);
+      process.exit(1);
+    }
+  }
+
   const projectName = getProjectName(cwd);
   const personalTag = getContainerTag(cwd);
   const repoTag = getRepoContainerTag(cwd);
@@ -61,7 +74,16 @@ async function main() {
 
     console.log(`Project: ${projectName}\n`);
 
-    if (containerType === 'both') {
+    if (containerType === 'custom' && containerTag) {
+      const result = await client.search(query, containerTag, { limit: 10 });
+      if (result.results?.length > 0) {
+        console.log(
+          formatSearchResults(query, result.results, `Container: ${containerTag}`),
+        );
+      } else {
+        console.log(`No memories found in container '${containerTag}' for "${query}"`);
+      }
+    } else if (containerType === 'both') {
       const [personalResult, repoResult] = await Promise.all([
         client.search(query, personalTag, { limit: 5 }),
         client.search(query, repoTag, { limit: 5 }),

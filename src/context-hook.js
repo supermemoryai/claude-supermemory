@@ -4,7 +4,7 @@ const {
   getRepoContainerTag,
   getProjectName,
 } = require('./lib/container-tag');
-const { loadSettings, getApiKey, debugLog } = require('./lib/settings');
+const { loadSettings, getApiKey, debugLog, getContainerCatalog } = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
 const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
@@ -107,18 +107,33 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
         ? `<supermemory-status>\n${[...new Set(apiErrors)].join('\n')}\n</supermemory-status>\n`
         : '';
 
+    const containerCatalog = getContainerCatalog(cwd);
+    let containerSection = '';
+    if (containerCatalog) {
+      containerSection = `\n<supermemory-containers>\n${containerCatalog}\n</supermemory-containers>`;
+    }
+
     if (!additionalContext) {
-      writeOutput({
-        hookSpecificOutput: {
-          hookEventName: 'SessionStart',
-          additionalContext: apiErrors.length > 0
-            ? errorNotice
-            : `<supermemory-context>
-No previous memories found for this project.
-Memories will be saved as you work.
-</supermemory-context>`,
-        },
-      });
+      if (containerCatalog) {
+        writeOutput({
+          hookSpecificOutput: {
+            hookEventName: 'SessionStart',
+            additionalContext:
+              errorNotice +
+              `<supermemory-context>\nNo previous memories found for this project.\nMemories will be saved as you work.\n</supermemory-context>` +
+              containerSection,
+          },
+        });
+      } else {
+        writeOutput({
+          hookSpecificOutput: {
+            hookEventName: 'SessionStart',
+            additionalContext: apiErrors.length > 0
+              ? errorNotice
+              : `<supermemory-context>\nNo previous memories found for this project.\nMemories will be saved as you work.\n</supermemory-context>`,
+          },
+        });
+      }
       return;
     }
 
@@ -126,12 +141,13 @@ Memories will be saved as you work.
       length: additionalContext.length,
       hasPersonal: !!personalContext,
       hasRepo: !!repoContext,
+      hasContainerCatalog: !!containerCatalog,
     });
 
     writeOutput({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: errorNotice + additionalContext,
+        additionalContext: errorNotice + additionalContext + containerSection,
       },
     });
   } catch (err) {

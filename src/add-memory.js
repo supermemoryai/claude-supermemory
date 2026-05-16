@@ -3,15 +3,30 @@ const {
   PERSONAL_ENTITY_CONTEXT,
 } = require('./lib/supermemory-client');
 const { getContainerTag, getProjectName } = require('./lib/container-tag');
-const { loadSettings, getApiKey } = require('./lib/settings');
+const { loadSettings, getApiKey, validateContainerTag } = require('./lib/settings');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 
+function parseArgs(args) {
+  let containerTag = null;
+  const contentParts = [];
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--container' && i + 1 < args.length) {
+      containerTag = args[++i];
+    } else {
+      contentParts.push(args[i]);
+    }
+  }
+
+  return { content: contentParts.join(' '), containerTag };
+}
+
 async function main() {
-  const content = process.argv.slice(2).join(' ');
+  const { content, containerTag } = parseArgs(process.argv.slice(2));
 
   if (!content || !content.trim()) {
     console.log(
-      'No content provided. Usage: node add-memory.cjs "content to save"',
+      'No content provided. Usage: node add-memory.cjs [--container <tag>] "content to save"',
     );
     return;
   }
@@ -28,14 +43,23 @@ async function main() {
   }
 
   const cwd = process.cwd();
-  const containerTag = getContainerTag(cwd);
+
+  if (containerTag) {
+    const validationError = validateContainerTag(containerTag, cwd);
+    if (validationError) {
+      console.log(validationError);
+      process.exit(1);
+    }
+  }
+
+  const effectiveTag = containerTag || getContainerTag(cwd);
   const projectName = getProjectName(cwd);
 
   try {
-    const client = new SupermemoryClient(apiKey, containerTag);
+    const client = new SupermemoryClient(apiKey, effectiveTag);
     const result = await client.addMemory(
       content,
-      containerTag,
+      effectiveTag,
       {
         type: 'manual',
         project: projectName,
@@ -44,7 +68,10 @@ async function main() {
       { entityContext: PERSONAL_ENTITY_CONTEXT },
     );
 
-    console.log(`Memory saved to project: ${projectName}`);
+    const tagLabel = containerTag
+      ? `container '${containerTag}'`
+      : `project: ${projectName}`;
+    console.log(`Memory saved to ${tagLabel}`);
     console.log(`ID: ${result.id}`);
   } catch (err) {
     console.log(`Error saving memory: ${getUserFriendlyError(err)}`);
