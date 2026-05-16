@@ -3,7 +3,11 @@ const {
   REPO_ENTITY_CONTEXT,
 } = require('./lib/supermemory-client');
 const { getRepoContainerTag, getProjectName } = require('./lib/container-tag');
-const { loadSettings, getApiKey, validateContainerTag } = require('./lib/settings');
+const {
+  loadSettings,
+  getApiKey,
+  validateContainerTag,
+} = require('./lib/settings');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 
 function parseArgs(args) {

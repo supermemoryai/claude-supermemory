@@ -4,7 +4,12 @@ const {
   getRepoContainerTag,
   getProjectName,
 } = require('./lib/container-tag');
-const { loadSettings, getApiKey, debugLog, getContainerCatalog } = require('./lib/settings');
+const {
+  loadSettings,
+  getApiKey,
+  debugLog,
+  getContainerCatalog,
+} = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
 const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
@@ -73,9 +78,7 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
       client
         .getProfile(personalTag, projectName)
         .catch(handleProfileError('personal')),
-      client
-        .getProfile(repoTag, projectName)
-        .catch(handleProfileError('repo')),
+      client.getProfile(repoTag, projectName).catch(handleProfileError('repo')),
     ]);
 
     const personalContext = formatContext(
@@ -128,9 +131,10 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
         writeOutput({
           hookSpecificOutput: {
             hookEventName: 'SessionStart',
-            additionalContext: apiErrors.length > 0
-              ? errorNotice
-              : `<supermemory-context>\nNo previous memories found for this project.\nMemories will be saved as you work.\n</supermemory-context>`,
+            additionalContext:
+              apiErrors.length > 0
+                ? errorNotice
+                : `<supermemory-context>\nNo previous memories found for this project.\nMemories will be saved as you work.\n</supermemory-context>`,
           },
         });
       }

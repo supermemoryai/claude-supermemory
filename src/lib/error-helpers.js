@@ -13,7 +13,7 @@
  * @returns {string}
  */
 function getUserFriendlyError(err) {
-  const status = err && err.status;
+  const status = err?.status;
 
   if (status === 400) {
     return 'Bad request \u2014 your API key or request format may be invalid. Check your key at https://console.supermemory.ai';
@@ -31,7 +31,7 @@ function getUserFriendlyError(err) {
     return 'Supermemory service is temporarily unavailable. Will retry next session.';
   }
 
-  return (err && err.message) || 'Unknown error';
+  return err?.message || 'Unknown error';
 }
 
 /**
@@ -44,7 +44,7 @@ function getUserFriendlyError(err) {
  * @returns {boolean}
  */
 function isRetryableError(err) {
-  const status = err && err.status;
+  const status = err?.status;
   if (status === 429) return true;
   if (typeof status === 'number' && status >= 500) return true;
   // Connection / timeout errors have no status
@@ -62,7 +62,7 @@ function isRetryableError(err) {
  * @returns {boolean}
  */
 function isBenignError(err) {
-  const status = err && err.status;
+  const status = err?.status;
   if (status === 404) return true;
   // No status usually means a connection or timeout error
   if (status === undefined || status === null) return true;

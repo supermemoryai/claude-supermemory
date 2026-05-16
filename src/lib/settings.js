@@ -158,7 +158,10 @@ function getContainerCatalog(cwd) {
     settings.customContainerInstructions ||
     '';
 
-  const lines = ['Custom memory containers are available for organizing memories:', ''];
+  const lines = [
+    'Custom memory containers are available for organizing memories:',
+    '',
+  ];
   for (const c of containers) {
     lines.push(`- \`${c.tag}\`: ${c.description}`);
   }

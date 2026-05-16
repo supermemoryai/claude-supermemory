@@ -4,7 +4,11 @@ const {
   getContainerTag,
   getRepoContainerTag,
 } = require('./lib/container-tag');
-const { loadSettings, getApiKey, validateContainerTag } = require('./lib/settings');
+const {
+  loadSettings,
+  getApiKey,
+  validateContainerTag,
+} = require('./lib/settings');
 const { formatSearchResults } = require('./lib/format-context');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 
@@ -32,7 +36,9 @@ function parseArgs(args) {
 }
 
 async function main() {
-  const { containerType, query, containerTag } = parseArgs(process.argv.slice(2));
+  const { containerType, query, containerTag } = parseArgs(
+    process.argv.slice(2),
+  );
 
   if (!query || !query.trim()) {
     console.log(
@@ -78,10 +84,16 @@ async function main() {
       const result = await client.search(query, containerTag, { limit: 10 });
       if (result.results?.length > 0) {
         console.log(
-          formatSearchResults(query, result.results, `Container: ${containerTag}`),
+          formatSearchResults(
+            query,
+            result.results,
+            `Container: ${containerTag}`,
+          ),
         );
       } else {
-        console.log(`No memories found in container '${containerTag}' for "${query}"`);
+        console.log(
+          `No memories found in container '${containerTag}' for "${query}"`,
+        );
       }
     } else if (containerType === 'both') {
       const [personalResult, repoResult] = await Promise.all([
