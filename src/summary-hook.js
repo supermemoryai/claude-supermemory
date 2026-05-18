@@ -64,11 +64,11 @@ async function main() {
 
     const cleanedContent = formatted
       .replace(
-        /<supermemory-containers>[\s\S]*?<\/supermemory-containers>\s*/g,
+        /<supermemory-containers>[\s\S]*?<\/supermemory-containers>\n*/g,
         '',
       )
       .replace(
-        /\[SUPERMEMORY CONTAINERS\][\s\S]*?\[END SUPERMEMORY CONTAINERS\]\s*/g,
+        /\[SUPERMEMORY CONTAINERS\][\s\S]*?\[END SUPERMEMORY CONTAINERS\]\n*/g,
         '',
       )
       .trim();

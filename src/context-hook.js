@@ -132,9 +132,8 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
           hookSpecificOutput: {
             hookEventName: 'SessionStart',
             additionalContext:
-              apiErrors.length > 0
-                ? errorNotice
-                : `<supermemory-context>\nNo previous memories found for this project.\nMemories will be saved as you work.\n</supermemory-context>`,
+              errorNotice +
+              `<supermemory-context>\nNo previous memories found for this project.\nMemories will be saved as you work.\n</supermemory-context>`,
           },
         });
       }

@@ -9,24 +9,10 @@ const {
   validateContainerTag,
 } = require('./lib/settings');
 const { getUserFriendlyError } = require('./lib/error-helpers');
-
-function parseArgs(args) {
-  let containerTag = null;
-  const contentParts = [];
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--container' && i + 1 < args.length) {
-      containerTag = args[++i];
-    } else {
-      contentParts.push(args[i]);
-    }
-  }
-
-  return { content: contentParts.join(' '), containerTag };
-}
+const { parseMemoryArgs } = require('./lib/parse-args');
 
 async function main() {
-  const { content, containerTag } = parseArgs(process.argv.slice(2));
+  const { content, containerTag } = parseMemoryArgs(process.argv.slice(2));
 
   if (!content || !content.trim()) {
     console.log(

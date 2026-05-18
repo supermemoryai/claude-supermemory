@@ -11,32 +11,10 @@ const {
 } = require('./lib/settings');
 const { formatSearchResults } = require('./lib/format-context');
 const { getUserFriendlyError } = require('./lib/error-helpers');
-
-function parseArgs(args) {
-  let containerType = 'both';
-  let containerTag = null;
-  const queryParts = [];
-
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--user') {
-      containerType = 'user';
-    } else if (args[i] === '--repo') {
-      containerType = 'repo';
-    } else if (args[i] === '--both') {
-      containerType = 'both';
-    } else if (args[i] === '--container' && i + 1 < args.length) {
-      containerTag = args[++i];
-      containerType = 'custom';
-    } else {
-      queryParts.push(args[i]);
-    }
-  }
-
-  return { containerType, query: queryParts.join(' '), containerTag };
-}
+const { parseSearchArgs } = require('./lib/parse-args');
 
 async function main() {
-  const { containerType, query, containerTag } = parseArgs(
+  const { containerType, query, containerTag } = parseSearchArgs(
     process.argv.slice(2),
   );
 
@@ -76,7 +54,8 @@ async function main() {
   const repoTag = getRepoContainerTag(cwd);
 
   try {
-    const client = new SupermemoryClient(apiKey, personalTag);
+    const defaultTag = containerType === 'custom' ? containerTag : personalTag;
+    const client = new SupermemoryClient(apiKey, defaultTag);
 
     console.log(`Project: ${projectName}\n`);
 

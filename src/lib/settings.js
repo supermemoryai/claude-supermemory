@@ -136,7 +136,7 @@ function getSignalConfig(cwd) {
   return { enabled, keywords, turnsBefore };
 }
 
-function getContainerCatalog(cwd) {
+function getResolvedContainers(cwd) {
   const settings = loadSettings();
   const projectConfig = loadProjectConfig(cwd || process.cwd());
 
@@ -144,19 +144,25 @@ function getContainerCatalog(cwd) {
     projectConfig?.enableCustomContainers ??
     settings.enableCustomContainers ??
     false;
-  if (!enabled) return null;
 
   const globalContainers = settings.customContainers || [];
   const projectContainers = projectConfig?.customContainers || [];
   const containers = [...globalContainers, ...projectContainers].filter(
     (c) => c && typeof c.tag === 'string' && typeof c.description === 'string',
   );
-  if (containers.length === 0) return null;
 
   const instructions =
     projectConfig?.customContainerInstructions ||
     settings.customContainerInstructions ||
     '';
+
+  return { enabled, containers, instructions };
+}
+
+function getContainerCatalog(cwd) {
+  const { enabled, containers, instructions } = getResolvedContainers(cwd);
+  if (!enabled) return null;
+  if (containers.length === 0) return null;
 
   const lines = [
     'Custom memory containers are available for organizing memories:',
@@ -183,20 +189,8 @@ function getContainerCatalog(cwd) {
 }
 
 function validateContainerTag(tag, cwd) {
-  const settings = loadSettings();
-  const projectConfig = loadProjectConfig(cwd || process.cwd());
-
-  const enabled =
-    projectConfig?.enableCustomContainers ??
-    settings.enableCustomContainers ??
-    false;
+  const { enabled, containers } = getResolvedContainers(cwd);
   if (!enabled) return null;
-
-  const globalContainers = settings.customContainers || [];
-  const projectContainers = projectConfig?.customContainers || [];
-  const containers = [...globalContainers, ...projectContainers].filter(
-    (c) => c && typeof c.tag === 'string',
-  );
   if (containers.length === 0) return null;
 
   const validTags = containers.map((c) => c.tag);
