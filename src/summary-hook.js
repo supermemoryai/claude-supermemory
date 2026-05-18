@@ -80,6 +80,8 @@ async function main() {
     }
 
     const client = new SupermemoryClient(apiKey);
+    // TODO: auto-save always routes to the default personal container.
+    // Custom container routing is only supported via explicit /add-memory --container calls.
     const containerTag = getContainerTag(cwd);
     const projectName = getProjectName(cwd);
 

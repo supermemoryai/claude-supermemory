@@ -147,9 +147,14 @@ function getResolvedContainers(cwd) {
 
   const globalContainers = settings.customContainers || [];
   const projectContainers = projectConfig?.customContainers || [];
-  const containers = [...globalContainers, ...projectContainers].filter(
-    (c) => c && typeof c.tag === 'string' && typeof c.description === 'string',
-  );
+  // Merge with project config taking precedence over global for duplicate tags.
+  const containerMap = new Map();
+  for (const c of [...globalContainers, ...projectContainers]) {
+    if (c && typeof c.tag === 'string' && typeof c.description === 'string') {
+      containerMap.set(c.tag, c);
+    }
+  }
+  const containers = Array.from(containerMap.values());
 
   const instructions =
     projectConfig?.customContainerInstructions ||
