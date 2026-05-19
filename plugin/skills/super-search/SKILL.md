@@ -21,6 +21,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/search-memory.cjs" [--user|--repo|--both] "U
 - `--both` (default): Search both personal session and project memories across team members in parallel
 - `--user`: Search personal/user memories across sessions
 - `--repo`: Search project/repo memories across team members
+- `--container <tag>`: Search a specific custom container (e.g. `code_preferences`, `personal`, `architecture`)
 
 ## Examples
 
@@ -39,6 +40,11 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/search-memory.cjs" [--user|--repo|--both] "U
 - User asks "what are my coding preferences":
   ```bash
   node "${CLAUDE_PLUGIN_ROOT}/scripts/search-memory.cjs" --user "coding preferences style"
+  ```
+
+- User asks to search a specific container:
+  ```bash
+  node "${CLAUDE_PLUGIN_ROOT}/scripts/search-memory.cjs" --container code_preferences "TypeScript formatting"
   ```
 
 ## Present Results

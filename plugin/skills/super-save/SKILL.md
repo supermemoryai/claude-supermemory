@@ -48,5 +48,17 @@ Keep it natural. Capture the conversation flow.
 ## Step 3: Save
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/save-project-memory.cjs" "FORMATTED_CONTENT"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/save-project-memory.cjs" [--container <tag>] "FORMATTED_CONTENT"
 ```
+
+### Container Routing
+
+If the user specifies a container (e.g. "save into code_preferences"), use `--container <tag>`:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/save-project-memory.cjs" --container code_preferences "FORMATTED_CONTENT"
+```
+
+If no container is specified, memories go to the default project container.
+
+Available containers are listed in the `<supermemory-containers>` section of session context (if enabled).

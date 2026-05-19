@@ -4,31 +4,19 @@ const {
   getContainerTag,
   getRepoContainerTag,
 } = require('./lib/container-tag');
-const { loadSettings, getApiKey } = require('./lib/settings');
+const {
+  loadSettings,
+  getApiKey,
+  validateContainerTag,
+} = require('./lib/settings');
 const { formatSearchResults } = require('./lib/format-context');
 const { getUserFriendlyError } = require('./lib/error-helpers');
-
-function parseArgs(args) {
-  let containerType = 'both';
-  const queryParts = [];
-
-  for (const arg of args) {
-    if (arg === '--user') {
-      containerType = 'user';
-    } else if (arg === '--repo') {
-      containerType = 'repo';
-    } else if (arg === '--both') {
-      containerType = 'both';
-    } else {
-      queryParts.push(arg);
-    }
-  }
-
-  return { containerType, query: queryParts.join(' ') };
-}
+const { parseSearchArgs } = require('./lib/parse-args');
 
 async function main() {
-  const { containerType, query } = parseArgs(process.argv.slice(2));
+  const { containerType, query, containerTag } = parseSearchArgs(
+    process.argv.slice(2),
+  );
 
   if (!query || !query.trim()) {
     console.log(
@@ -52,16 +40,41 @@ async function main() {
   }
 
   const cwd = process.cwd();
+
+  if (containerTag) {
+    const validationError = validateContainerTag(containerTag, cwd);
+    if (validationError) {
+      console.log(validationError);
+      process.exit(1);
+    }
+  }
+
   const projectName = getProjectName(cwd);
   const personalTag = getContainerTag(cwd);
   const repoTag = getRepoContainerTag(cwd);
 
   try {
-    const client = new SupermemoryClient(apiKey, personalTag);
+    const defaultTag = containerType === 'custom' ? containerTag : personalTag;
+    const client = new SupermemoryClient(apiKey, defaultTag);
 
     console.log(`Project: ${projectName}\n`);
 
-    if (containerType === 'both') {
+    if (containerType === 'custom' && containerTag) {
+      const result = await client.search(query, containerTag, { limit: 10 });
+      if (result.results?.length > 0) {
+        console.log(
+          formatSearchResults(
+            query,
+            result.results,
+            `Container: ${containerTag}`,
+          ),
+        );
+      } else {
+        console.log(
+          `No memories found in container '${containerTag}' for "${query}"`,
+        );
+      }
+    } else if (containerType === 'both') {
       const [personalResult, repoResult] = await Promise.all([
         client.search(query, personalTag, { limit: 5 }),
         client.search(query, repoTag, { limit: 5 }),

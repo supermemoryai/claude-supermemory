@@ -36,6 +36,9 @@ const DEFAULT_SETTINGS = {
     'deprecate',
   ],
   signalTurnsBefore: 3,
+  enableCustomContainers: false,
+  customContainers: [],
+  customContainerInstructions: '',
 };
 
 function ensureSettingsDir() {
@@ -133,6 +136,75 @@ function getSignalConfig(cwd) {
   return { enabled, keywords, turnsBefore };
 }
 
+function getResolvedContainers(cwd) {
+  const settings = loadSettings();
+  const projectConfig = loadProjectConfig(cwd || process.cwd());
+
+  const enabled =
+    projectConfig?.enableCustomContainers ??
+    settings.enableCustomContainers ??
+    false;
+
+  const globalContainers = settings.customContainers || [];
+  const projectContainers = projectConfig?.customContainers || [];
+  // Merge with project config taking precedence over global for duplicate tags.
+  const containerMap = new Map();
+  for (const c of [...globalContainers, ...projectContainers]) {
+    if (c && typeof c.tag === 'string' && typeof c.description === 'string') {
+      containerMap.set(c.tag, c);
+    }
+  }
+  const containers = Array.from(containerMap.values());
+
+  const instructions =
+    projectConfig?.customContainerInstructions ||
+    settings.customContainerInstructions ||
+    '';
+
+  return { enabled, containers, instructions };
+}
+
+function getContainerCatalog(cwd) {
+  const { enabled, containers, instructions } = getResolvedContainers(cwd);
+  if (!enabled) return null;
+  if (containers.length === 0) return null;
+
+  const lines = [
+    'Custom memory containers are available for organizing memories:',
+    '',
+  ];
+  for (const c of containers) {
+    lines.push(`- \`${c.tag}\`: ${c.description}`);
+  }
+  if (instructions) {
+    lines.push('');
+    lines.push(instructions);
+  }
+  lines.push('');
+  lines.push(
+    'When saving memories with /add-memory or /save-project-memory, use --container <tag> to route to a specific container.',
+  );
+  lines.push(
+    'When searching with /search-memory, use --container <tag> to search a specific container.',
+  );
+  lines.push(
+    'If no container is specified, memories go to the default personal/repo containers.',
+  );
+  return lines.join('\n');
+}
+
+function validateContainerTag(tag, cwd) {
+  const { enabled, containers } = getResolvedContainers(cwd);
+  if (!enabled) return null;
+  if (containers.length === 0) return null;
+
+  const validTags = containers.map((c) => c.tag);
+  if (validTags.includes(tag)) return null;
+
+  const validList = validTags.map((t) => `'${t}'`).join(', ');
+  return `Invalid container tag '${tag}'. Valid containers: ${validList}`;
+}
+
 module.exports = {
   SETTINGS_DIR,
   SETTINGS_FILE,
@@ -144,4 +216,6 @@ module.exports = {
   getIncludeTools,
   shouldIncludeTool,
   getSignalConfig,
+  getContainerCatalog,
+  validateContainerTag,
 };

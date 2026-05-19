@@ -62,12 +62,30 @@ async function main() {
       return;
     }
 
+    const cleanedContent = formatted
+      .replace(
+        /<supermemory-containers>[\s\S]*?<\/supermemory-containers>\n*/g,
+        '',
+      )
+      .replace(
+        /\[SUPERMEMORY CONTAINERS\][\s\S]*?\[END SUPERMEMORY CONTAINERS\]\n*/g,
+        '',
+      )
+      .trim();
+
+    if (!cleanedContent) {
+      debugLog(settings, 'No content after stripping container metadata');
+      writeOutput({ continue: true });
+      return;
+    }
+
     const client = new SupermemoryClient(apiKey);
+
     const containerTag = getContainerTag(cwd);
     const projectName = getProjectName(cwd);
 
     await client.addMemory(
-      formatted,
+      cleanedContent,
       containerTag,
       {
         type: 'session_turn',
