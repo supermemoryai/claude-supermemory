@@ -6,7 +6,6 @@ const {
 } = require('./lib/container-tag');
 const { loadSettings, getApiKey, debugLog } = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
-const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
 const { getUserFriendlyError, isBenignError } = require('./lib/error-helpers');
 
@@ -24,24 +23,9 @@ async function main() {
     try {
       apiKey = getApiKey(settings);
     } catch {
-      try {
-        debugLog(settings, 'No API key found, starting browser auth flow');
-        apiKey = await startAuthFlow();
-        debugLog(settings, 'Auth flow completed successfully');
-      } catch (authErr) {
-        const isTimeout = authErr.message === 'AUTH_TIMEOUT';
-        writeOutput({
-          hookSpecificOutput: {
-            hookEventName: 'SessionStart',
-            additionalContext: `<supermemory-status>
-${isTimeout ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
-If the browser did not open, visit: ${AUTH_BASE_URL}
-Or set SUPERMEMORY_CC_API_KEY environment variable manually.
-</supermemory-status>`,
-          },
-        });
-        return;
-      }
+      debugLog(settings, 'No API key found; supermemory disabled');
+      writeOutput({ continue: true, suppressOutput: true });
+      return;
     }
 
     const client = new SupermemoryClient(apiKey);
