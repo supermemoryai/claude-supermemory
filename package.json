@@ -1,6 +1,6 @@
 {
   "name": "claude-supermemory-dev",
-  "version": "2.0.1",
+  "version": "0.0.4",
   "description": "Claude code plugin by Supermemory AI",
   "private": true,
   "type": "commonjs",
