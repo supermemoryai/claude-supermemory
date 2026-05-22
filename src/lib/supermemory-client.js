@@ -77,7 +77,7 @@ class SupermemoryClient {
     this.client = new Supermemory({
       apiKey,
       baseURL: API_URL,
-      defaultHeaders: integrityHeaders,
+      defaultHeaders: { ...integrityHeaders, 'x-sm-source': 'claude-code' },
     });
     this.containerTag = tag;
   }
@@ -86,7 +86,7 @@ class SupermemoryClient {
     const payload = {
       content,
       containerTag: containerTag || this.containerTag,
-      metadata: { sm_source: 'claude-code-plugin', ...metadata },
+      metadata: { sm_source: 'claude-code', ...metadata },
     };
     if (options.customId) payload.customId = options.customId;
     if (options.entityContext) payload.entityContext = options.entityContext;
