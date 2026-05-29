@@ -15,6 +15,7 @@ const {
   formatSignalEntries,
 } = require('./lib/transcript-formatter');
 const { getUserFriendlyError } = require('./lib/error-helpers');
+const { saveLastSession } = require('./lib/last-session');
 
 async function main() {
   const settings = loadSettings();
@@ -66,7 +67,7 @@ async function main() {
     const containerTag = getContainerTag(cwd);
     const projectName = getProjectName(cwd);
 
-    await client.addMemory(
+    const result = await client.addMemory(
       formatted,
       containerTag,
       {
@@ -76,6 +77,10 @@ async function main() {
       },
       { customId: sessionId, entityContext: PERSONAL_ENTITY_CONTEXT },
     );
+
+    if (result?.id) {
+      saveLastSession({ id: result.id, containerTag });
+    }
 
     debugLog(settings, 'Session turn saved', { length: formatted.length });
     writeOutput({ continue: true });
