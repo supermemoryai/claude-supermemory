@@ -28,8 +28,8 @@ export SUPERMEMORY_CC_API_KEY="sm_..."
 
 ## How It Works
 
-- **super-search** — Ask about past work or previous sessions, Claude searches your memories
-- **super-save** — Ask to save something important, Claude saves it for the team
+- **supermemory-search** — Ask about past work or previous sessions, Claude searches your memories
+- **supermemory-save** — Ask to save something important, Claude saves it for the team
 
 ## Commands
 
