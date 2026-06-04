@@ -14,19 +14,23 @@ Analyze what the user is asking to save from the conversation.
 
 ## Step 2: Format Content
 
+Use this structure, replacing every field with real conversation details before saving:
+
 ```
-[SAVE:<username>:<date>]
+[SAVE:actual-username:YYYY-MM-DD]
 
-<Username> wanted to <goal/problem>.
+Actual user name wanted to solve the concrete goal or problem.
 
-Claude suggested <approach/solution>.
+Claude suggested the specific approach or solution.
 
-<Username> decided to <decision made>.
+Actual user name decided the concrete decision or next step.
 
-<key details, files if relevant>
+Key details and relevant files, if any.
 
 [/SAVE]
 ```
+
+Never save literal placeholders like `<Username>`, `<goal/problem>`, `<date>`, or other angle-bracket template text. If a detail is unknown, omit that sentence or write a short natural sentence using only known facts.
 
 Example:
 ```
@@ -46,6 +50,8 @@ Files: src/save-project-memory.js, src/lib/container-tag.js
 Keep it natural. Capture the conversation flow.
 
 ## Step 3: Save
+
+Before running the command, confirm the formatted content contains no angle-bracket placeholders and no unfilled template wording.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/save-project-memory.cjs" "FORMATTED_CONTENT"
