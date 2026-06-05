@@ -4,7 +4,7 @@ description: Search your coding memory. Use when user asks about past work, prev
 allowed-tools: Bash(node:*)
 ---
 
-# Super Search
+# Supermemory Search
 
 Search Supermemory for past coding sessions, decisions, and saved information.
 

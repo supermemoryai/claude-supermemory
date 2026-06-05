@@ -4,7 +4,7 @@ description: Save important project knowledge to memory. Use when user wants to 
 allowed-tools: Bash(node *)
 ---
 
-# Super Save
+# Supermemory Save
 
 Save important project knowledge based on what the user wants to preserve.
 
