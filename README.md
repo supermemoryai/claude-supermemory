@@ -67,7 +67,7 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
   "signalTurnsBefore": 3,
   "includeTools": ["Edit", "Write"],
   "searchOnPrompt": true,
-  "searchLimit": 3
+  "searchLimit": 10
 }
 ```
 
@@ -79,7 +79,7 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
 | `signalTurnsBefore`     | Context turns before signal (default: 3)              |
 | `includeTools`          | Tools to explicitly capture                           |
 | `searchOnPrompt`        | Search memories on every message (default: true)      |
-| `searchLimit`           | Max memories injected per message (default: 3)        |
+| `searchLimit`           | Max memories injected per message (default: 10)       |
 
 **Project Config** — `.claude/.supermemory-claude/config.json`
 

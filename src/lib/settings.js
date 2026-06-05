@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS = {
   signalTurnsBefore: 3,
   // Per-message memory search (UserPromptSubmit hook)
   searchOnPrompt: true,
-  searchLimit: 3,
+  searchLimit: 10,
 };
 
 function ensureSettingsDir() {
