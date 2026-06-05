@@ -29,12 +29,6 @@ function withTimeout(promise, ms, fallback) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function tagsForScope(scope, personalTag, repoTag) {
-  if (scope === 'user') return [personalTag];
-  if (scope === 'repo') return [repoTag];
-  return [personalTag, repoTag];
-}
-
 async function main() {
   const settings = loadSettings();
 
@@ -50,12 +44,8 @@ async function main() {
       return;
     }
 
-    // Skip trivial / non-query prompts (empty, too short, slash commands).
-    if (
-      !prompt ||
-      prompt.length < config.minPromptLength ||
-      prompt.startsWith('/')
-    ) {
+    // Skip non-query prompts (empty or slash commands).
+    if (!prompt || prompt.startsWith('/')) {
       writeOutput({ continue: true });
       return;
     }
@@ -70,9 +60,7 @@ async function main() {
     }
 
     const query = prompt.slice(0, MAX_QUERY_LENGTH);
-    const personalTag = getContainerTag(cwd);
-    const repoTag = getRepoContainerTag(cwd);
-    const tags = tagsForScope(config.scope, personalTag, repoTag);
+    const tags = [getContainerTag(cwd), getRepoContainerTag(cwd)];
 
     const client = new SupermemoryClient(apiKey);
 
@@ -103,20 +91,12 @@ async function main() {
       return;
     }
 
-    // Filter by relevance, dedup against the session set and within this turn.
+    // Dedup against the session set and within this turn.
     const seen = loadSeen(sessionId);
     const turnSeen = new Set();
-    const minSim = config.minSimilarity;
     const fresh = [];
 
     for (const item of all) {
-      if (
-        minSim != null &&
-        item.similarity != null &&
-        item.similarity < minSim
-      ) {
-        continue;
-      }
       const keys = memoryKeys(item);
       if (keys.length === 0) continue;
       if (isSeen(seen, keys) || isSeen(turnSeen, keys)) continue;

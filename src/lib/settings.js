@@ -39,9 +39,6 @@ const DEFAULT_SETTINGS = {
   // Per-message memory search (UserPromptSubmit hook)
   searchOnPrompt: true,
   searchLimit: 3,
-  searchMinSimilarity: 0.4,
-  searchMinPromptLength: 6,
-  searchScope: 'both',
 };
 
 function ensureSettingsDir() {
@@ -149,9 +146,6 @@ function getSearchConfig(cwd) {
   return {
     enabled: pick('searchOnPrompt'),
     limit: pick('searchLimit'),
-    minSimilarity: pick('searchMinSimilarity'),
-    minPromptLength: pick('searchMinPromptLength'),
-    scope: pick('searchScope'),
   };
 }
 

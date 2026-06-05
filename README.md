@@ -67,9 +67,7 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
   "signalTurnsBefore": 3,
   "includeTools": ["Edit", "Write"],
   "searchOnPrompt": true,
-  "searchLimit": 3,
-  "searchMinSimilarity": 0.4,
-  "searchScope": "both"
+  "searchLimit": 3
 }
 ```
 
@@ -82,9 +80,6 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
 | `includeTools`          | Tools to explicitly capture                           |
 | `searchOnPrompt`        | Search memories on every message (default: true)      |
 | `searchLimit`           | Max memories injected per message (default: 3)        |
-| `searchMinSimilarity`   | Min relevance to inject, 0–1 (default: 0.4)           |
-| `searchMinPromptLength` | Skip search for prompts shorter than this (default: 6)|
-| `searchScope`           | `both`, `user`, or `repo` (default: both)             |
 
 **Project Config** — `.claude/.supermemory-claude/config.json`
 
