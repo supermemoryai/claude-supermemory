@@ -10,6 +10,7 @@ const OUT = path.join(ROOT, 'plugin', 'scripts');
 const hooks = [
   'context-hook',
   'summary-hook',
+  'search-hook',
   'search-memory',
   'add-memory',
   'save-project-memory',
