@@ -3,11 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 
-const SESSIONS_DIR = path.join(
-  os.homedir(),
-  '.supermemory-claude',
-  'sessions',
-);
+const SESSIONS_DIR = path.join(os.homedir(), '.supermemory-claude', 'sessions');
 
 // Prune session files older than this so they don't accumulate forever.
 const MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days

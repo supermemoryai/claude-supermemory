@@ -1,8 +1,5 @@
 const { SupermemoryClient } = require('./lib/supermemory-client');
-const {
-  getContainerTag,
-  getRepoContainerTag,
-} = require('./lib/container-tag');
+const { getContainerTag, getRepoContainerTag } = require('./lib/container-tag');
 const {
   loadSettings,
   getApiKey,
