@@ -28,6 +28,14 @@ export SUPERMEMORY_CC_API_KEY="sm_..."
 
 ## How It Works
 
+Memory works automatically in the background:
+
+- **On session start** — your profile and project knowledge load into context
+- **On every message** — relevant memories are searched (personal + project tags) and the **new** ones are injected, deduplicated against what's already in context for the session
+- **On every turn** — the conversation is captured so future sessions remember it
+
+You can also drive it explicitly:
+
 - **supermemory-search** — Ask about past work or previous sessions, Claude searches your memories
 - **supermemory-save** — Ask to save something important, Claude saves it for the team
 
@@ -58,17 +66,21 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
   "signalExtraction": true,
   "signalKeywords": ["remember", "architecture", "decision", "bug", "fix"],
   "signalTurnsBefore": 3,
-  "includeTools": ["Edit", "Write"]
+  "includeTools": ["Edit", "Write"],
+  "searchOnPrompt": true,
+  "searchLimit": 10
 }
 ```
 
-| Option              | Description                                   |
-| ------------------- | --------------------------------------------- |
-| `maxProfileItems`   | Max memories in context (default: 5)          |
-| `signalExtraction`  | Only capture important turns (default: false) |
-| `signalKeywords`    | Keywords that trigger capture                 |
-| `signalTurnsBefore` | Context turns before signal (default: 3)      |
-| `includeTools`      | Tools to explicitly capture                   |
+| Option                  | Description                                            |
+| ----------------------- | ----------------------------------------------------- |
+| `maxProfileItems`       | Max memories in context (default: 5)                  |
+| `signalExtraction`      | Only capture important turns (default: false)         |
+| `signalKeywords`        | Keywords that trigger capture                         |
+| `signalTurnsBefore`     | Context turns before signal (default: 3)              |
+| `includeTools`          | Tools to explicitly capture                           |
+| `searchOnPrompt`        | Search memories on every message (default: true)      |
+| `searchLimit`           | Max memories injected per message (default: 10)       |
 
 **Project Config** — `.claude/.supermemory-claude/config.json`
 

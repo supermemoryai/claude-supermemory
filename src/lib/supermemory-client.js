@@ -106,6 +106,7 @@ class SupermemoryClient {
       searchMode: options.searchMode || 'hybrid',
     });
     const mapped = result.results.map((r) => ({
+      id: r.id ?? r.documentId,
       memory: r.content || r.memory || r.context || '',
       chunk: r.chunk,
       metadata: r.metadata,

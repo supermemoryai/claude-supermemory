@@ -36,6 +36,9 @@ const DEFAULT_SETTINGS = {
     'deprecate',
   ],
   signalTurnsBefore: 3,
+  // Per-message memory search (UserPromptSubmit hook)
+  searchOnPrompt: true,
+  searchLimit: 10,
 };
 
 function ensureSettingsDir() {
@@ -133,6 +136,19 @@ function getSignalConfig(cwd) {
   return { enabled, keywords, turnsBefore };
 }
 
+function getSearchConfig(cwd) {
+  const settings = loadSettings();
+  const projectConfig = loadProjectConfig(cwd || process.cwd()) || {};
+
+  const pick = (key) =>
+    projectConfig[key] !== undefined ? projectConfig[key] : settings[key];
+
+  return {
+    enabled: pick('searchOnPrompt'),
+    limit: pick('searchLimit'),
+  };
+}
+
 module.exports = {
   SETTINGS_DIR,
   SETTINGS_FILE,
@@ -144,4 +160,5 @@ module.exports = {
   getIncludeTools,
   shouldIncludeTool,
   getSignalConfig,
+  getSearchConfig,
 };

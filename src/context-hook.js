@@ -9,6 +9,11 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
 const { getUserFriendlyError, isBenignError } = require('./lib/error-helpers');
+const {
+  memoryKeys,
+  mergeSeen,
+  pruneOldSessions,
+} = require('./lib/session-set');
 
 async function main() {
   const settings = loadSettings();
@@ -16,6 +21,7 @@ async function main() {
   try {
     const input = await readStdin();
     const cwd = input.cwd || process.cwd();
+    const sessionId = input.session_id;
     const projectName = getProjectName(cwd);
 
     debugLog(settings, 'SessionStart', { cwd, projectName });
@@ -75,6 +81,24 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
         .catch(handleProfileError('personal')),
       client.getProfile(repoTag, projectName).catch(handleProfileError('repo')),
     ]);
+
+    // Seed the per-session dedup set with the profile facts we're about to
+    // inject, so the per-message search hook won't re-surface them. Merge (not
+    // overwrite) since SessionStart re-fires on resume/compact with the same id.
+    try {
+      const max = settings.maxProfileItems;
+      const shownFacts = [];
+      for (const result of [personalResult, repoResult]) {
+        if (!result) continue;
+        shownFacts.push(...(result.profile?.static || []).slice(0, max));
+        shownFacts.push(...(result.profile?.dynamic || []).slice(0, max));
+      }
+      const seedKeys = shownFacts.flatMap((fact) =>
+        memoryKeys({ memory: fact }),
+      );
+      if (sessionId && seedKeys.length > 0) mergeSeen(sessionId, seedKeys);
+      pruneOldSessions();
+    } catch {}
 
     const personalContext = formatContext(
       personalResult,
