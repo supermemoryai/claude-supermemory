@@ -9,6 +9,13 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
 const { getUserFriendlyError, isBenignError } = require('./lib/error-helpers');
+const { checkForUpdate, formatUpdateNotice } = require('./lib/version-check');
+
+const PLUGIN_VERSION = '0.0.5';
+
+function combineOutputParts(parts) {
+  return parts.map((part) => part && part.trim()).filter(Boolean).join('\n\n');
+}
 
 async function main() {
   const settings = loadSettings();
@@ -17,6 +24,9 @@ async function main() {
     const input = await readStdin();
     const cwd = input.cwd || process.cwd();
     const projectName = getProjectName(cwd);
+    const updateCheck = checkForUpdate(PLUGIN_VERSION).then((info) =>
+      info ? formatUpdateNotice(info) : null,
+    );
 
     debugLog(settings, 'SessionStart', { cwd, projectName });
 
@@ -33,11 +43,11 @@ async function main() {
         writeOutput({
           hookSpecificOutput: {
             hookEventName: 'SessionStart',
-            additionalContext: `<supermemory-status>
+            additionalContext: combineOutputParts([`<supermemory-status>
 ${isTimeout ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
 If the browser did not open, visit: ${AUTH_BASE_URL}
 Or set SUPERMEMORY_CC_API_KEY environment variable manually.
-</supermemory-status>`,
+</supermemory-status>`, await updateCheck]),
           },
         });
         return;
@@ -106,16 +116,19 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
         : '';
 
     if (!additionalContext) {
+      const updateNotice = await updateCheck;
       writeOutput({
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
-          additionalContext:
+          additionalContext: combineOutputParts([
             apiErrors.length > 0
               ? errorNotice
               : `<supermemory-context>
 No previous memories found for this project.
 Memories will be saved as you work.
 </supermemory-context>`,
+            updateNotice,
+          ]),
         },
       });
       return;
@@ -127,10 +140,11 @@ Memories will be saved as you work.
       hasRepo: !!repoContext,
     });
 
+    const updateNotice = await updateCheck;
     writeOutput({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
-        additionalContext: errorNotice + additionalContext,
+        additionalContext: combineOutputParts([errorNotice + additionalContext, updateNotice]),
       },
     });
   } catch (err) {
