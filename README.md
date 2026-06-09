@@ -28,6 +28,7 @@ export SUPERMEMORY_CC_API_KEY="sm_..."
 
 ## How It Works
 
+- **Reasoned recall** — Before each turn, Claude decides whether recalling memory would actually help your current message, and only searches when it's worth it — every turn, once in a while, or not at all. The search runs automatically (no permission prompt), just like auto-capture. Searching only when needed also keeps more usage on your plan
 - **supermemory-search** — Ask about past work or previous sessions, Claude searches your memories
 - **supermemory-save** — Ask to save something important, Claude saves it for the team
 
@@ -65,6 +66,7 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
 | Option              | Description                                   |
 | ------------------- | --------------------------------------------- |
 | `maxProfileItems`   | Max memories in context (default: 5)          |
+| `recallDirective`   | Override the built-in reasoned-recall instruction Claude is given |
 | `signalExtraction`  | Only capture important turns (default: false) |
 | `signalKeywords`    | Keywords that trigger capture                 |
 | `signalTurnsBefore` | Context turns before signal (default: 3)      |

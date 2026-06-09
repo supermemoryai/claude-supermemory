@@ -39,7 +39,8 @@ async function checkForUpdate(currentVersion) {
     if (!response.ok) return null;
 
     const data = await response.json();
-    const latestVersion = typeof data.version === 'string' ? data.version : null;
+    const latestVersion =
+      typeof data.version === 'string' ? data.version : null;
     if (!latestVersion || !isVersionNewer(latestVersion, currentVersion)) {
       return null;
     }
