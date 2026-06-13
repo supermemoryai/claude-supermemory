@@ -15,6 +15,8 @@ Your agent remembers what you worked on - across sessions, across projects.
 
 ## Installation
 
+> **Requires Node.js 18+** on your PATH — the memory hooks run as Node scripts.
+
 ```bash
 /plugin marketplace add supermemoryai/claude-supermemory
 /plugin install supermemory
