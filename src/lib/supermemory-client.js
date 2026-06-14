@@ -3,6 +3,8 @@ const {
   getRequestIntegrity,
   validateApiKeyFormat,
   validateContainerTag,
+  validateContentLength,
+  sanitizeMetadata,
 } = require('./validate.js');
 const { BASE_URL } = require('./constants');
 
@@ -83,10 +85,18 @@ class SupermemoryClient {
   }
 
   async addMemory(content, containerTag, metadata = {}, options = {}) {
+    const contentCheck = validateContentLength(content);
+    if (!contentCheck.valid) {
+      throw new Error(`Invalid memory content: ${contentCheck.reason}`);
+    }
+
     const payload = {
       content,
       containerTag: containerTag || this.containerTag,
-      metadata: { sm_source: 'claude-code', ...metadata },
+      metadata: sanitizeMetadata({
+        sm_source: 'claude-code',
+        ...metadata,
+      }),
     };
     if (options.customId) payload.customId = options.customId;
     if (options.entityContext) payload.entityContext = options.entityContext;
