@@ -18,6 +18,7 @@ const {
 } = require('./lib/transcript-formatter');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { saveLastSession } = require('./lib/last-session');
+const { writeState } = require('./lib/statusline-state');
 
 async function main() {
   const settings = loadSettings();
@@ -62,6 +63,7 @@ async function main() {
 
     if (!formatted) {
       debugLog(settings, 'No new content to save');
+      writeState({ ingesting: false, lastIngestStatus: 'skipped' });
       writeOutput({ continue: true });
       return;
     }
@@ -70,6 +72,12 @@ async function main() {
     const client = new SupermemoryClient(apiKey, undefined, { baseUrl });
     const containerTag = getContainerTag(cwd);
     const projectName = getProjectName(cwd);
+
+    // Count turns/signals as a proxy for "things learnt"
+    const turnCount = (formatted.match(/<\|start\|>/g) || []).length;
+    const learntCount = Math.max(1, Math.ceil(turnCount / 2));
+
+    writeState({ ingesting: true, learntCount });
 
     const result = await client.addMemory(
       formatted,
@@ -86,12 +94,14 @@ async function main() {
       saveLastSession({ id: result.id, containerTag });
     }
 
+    writeState({ ingesting: false, lastIngestStatus: 'saved', lastIngestAt: Date.now(), learntCount });
     debugLog(settings, 'Session turn saved', { length: formatted.length });
     writeOutput({ continue: true });
   } catch (err) {
     const friendly = getUserFriendlyError(err);
     debugLog(settings, 'Error', { error: friendly });
     console.error(`Supermemory: ${friendly}`);
+    writeState({ ingesting: false, lastIngestStatus: 'error' });
     writeOutput({ continue: true });
   }
 }

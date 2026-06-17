@@ -8,6 +8,7 @@ const { loadProjectConfig } = require('./lib/project-config');
 const { loadSettings, getApiKey, getBaseUrl } = require('./lib/settings');
 const { formatSearchResults } = require('./lib/format-context');
 const { getUserFriendlyError } = require('./lib/error-helpers');
+const { writeState } = require('./lib/statusline-state');
 
 function parseArgs(args) {
   let containerType = 'both';
@@ -70,6 +71,11 @@ async function main() {
         client.search(query, repoTag, { limit: 5 }),
       ]);
 
+      const searchTotal =
+        (personalResult.results?.length || 0) +
+        (repoResult.results?.length || 0);
+      writeState({ lastSearchQuery: query, lastSearchResults: searchTotal, lastSearchAt: Date.now() });
+
       if (personalResult.results?.length > 0) {
         console.log(
           formatSearchResults(query, personalResult.results, 'Personal'),
@@ -86,6 +92,7 @@ async function main() {
       const tag = containerType === 'user' ? personalTag : repoTag;
       const label = containerType === 'user' ? 'Personal' : 'Project';
       const searchResult = await client.search(query, tag, { limit: 10 });
+      writeState({ lastSearchQuery: query, lastSearchResults: searchResult.results?.length || 0, lastSearchAt: Date.now() });
       console.log(formatSearchResults(query, searchResult.results, label));
     }
   } catch (err) {
