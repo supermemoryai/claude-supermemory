@@ -1,4 +1,4 @@
 {
-  "version": "0.0.9",
+  "version": "0.0.10",
   "updateCommand": "/plugin marketplace update supermemory-plugins\n/plugin install supermemory@supermemory-plugins\n\nOnly if you still have the old \"claude-supermemory\" plugin, also remove it:\n/plugin uninstall claude-supermemory@supermemory-plugins"
 }
