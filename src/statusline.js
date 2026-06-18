@@ -92,7 +92,7 @@ function main() {
   if (!state.updatedAt) return;
 
   const now = Date.now();
-  const brand = `${BOLD}${BLUE}\u26A1supermemory${R}`;
+  const brand = `${BRIGHT}\u26A1${BOLD}${WHITE}supermemory${R}`;
 
   // Sync always wins
   if (state.ingesting) {
