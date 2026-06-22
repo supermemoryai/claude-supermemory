@@ -1,99 +1,52 @@
 const { SupermemoryClient } = require('./lib/supermemory-client');
-const {
-  getProjectName,
-  getContainerTag,
-  getRepoContainerTag,
-} = require('./lib/container-tag');
-const { loadProjectConfig } = require('./lib/project-config');
-const { loadSettings, getApiKey, getBaseUrl } = require('./lib/settings');
+const { loadCredentials } = require('./lib/auth');
 const { formatSearchResults } = require('./lib/format-context');
-const { getUserFriendlyError } = require('./lib/error-helpers');
 
-function parseArgs(args) {
-  let containerType = 'both';
-  const queryParts = [];
-
-  for (const arg of args) {
-    if (arg === '--user') {
-      containerType = 'user';
-    } else if (arg === '--repo') {
-      containerType = 'repo';
-    } else if (arg === '--both') {
-      containerType = 'both';
-    } else {
-      queryParts.push(arg);
-    }
+async function searchMemory(query, containerTag, options = {}) {
+  const credentials = loadCredentials();
+  if (!credentials) {
+    throw new Error('Not authenticated. Please run login.');
   }
 
-  return { containerType, query: queryParts.join(' ') };
-}
-
-async function main() {
-  const { containerType, query } = parseArgs(process.argv.slice(2));
-
-  if (!query || !query.trim()) {
-    console.log(
-      'No search query provided. Please specify what you want to search for.',
-    );
-    return;
-  }
-
-  const settings = loadSettings();
-  const cwd = process.cwd();
-  const projectConfig = loadProjectConfig(cwd);
-
-  let apiKey;
-  try {
-    apiKey = getApiKey(settings, cwd, projectConfig);
-  } catch {
-    console.log('Supermemory API key not configured.');
-    console.log(
-      'Set SUPERMEMORY_CC_API_KEY environment variable to enable memory search.',
-    );
-    console.log('Get your key at: https://app.supermemory.ai');
-    return;
-  }
-
-  const projectName = getProjectName(cwd);
-  const personalTag = getContainerTag(cwd);
-  const repoTag = getRepoContainerTag(cwd);
+  const client = new SupermemoryClient(credentials.apiKey, containerTag);
 
   try {
-    const baseUrl = getBaseUrl(cwd, projectConfig);
-    const client = new SupermemoryClient(apiKey, personalTag, { baseUrl });
+    // Search personal memories
+    const personalResult = await client.search(query, containerTag, {
+      ...options,
+      searchMode: 'hybrid',
+    });
 
-    console.log(`Project: ${projectName}\n`);
+    // Search repo memories
+    const repoResult = await client.search(query, 'repo-context', {
+      ...options,
+      searchMode: 'hybrid',
+    });
 
-    if (containerType === 'both') {
-      const [personalResult, repoResult] = await Promise.all([
-        client.search(query, personalTag, { limit: 5 }),
-        client.search(query, repoTag, { limit: 5 }),
-      ]);
+    let output = '';
 
+    if (personalResult.results?.length > 0 || repoResult.results?.length > 0) {
       if (personalResult.results?.length > 0) {
         console.log(
           formatSearchResults(query, personalResult.results, 'Personal'),
         );
       }
       if (repoResult.results?.length > 0) {
-        if (personalResult.results?.length > 0) console.log('');
-        console.log(formatSearchResults(query, repoResult.results, 'Project'));
-      }
-      if (!personalResult.results?.length && !repoResult.results?.length) {
-        console.log(`No memories found for "${query}"`);
+        console.log(formatSearchResults(query, repoResult.results, 'Repo'));
       }
     } else {
-      const tag = containerType === 'user' ? personalTag : repoTag;
-      const label = containerType === 'user' ? 'Personal' : 'Project';
-      const searchResult = await client.search(query, tag, { limit: 10 });
-      console.log(formatSearchResults(query, searchResult.results, label));
+      output = 'No memories found for query: ' + query;
+      console.log(output);
     }
-  } catch (err) {
-    console.log(`Error searching memories: ${getUserFriendlyError(err)}`);
+
+    return {
+      personal: personalResult.results,
+      repo: repoResult.results,
+    };
+  } catch (error) {
+    console.error('Search failed:', error.message);
+    throw error;
   }
 }
 
-main().catch((err) => {
-  console.error(`Fatal error: ${err.message}`);
-  process.exit(1);
-});
+module.exports = { searchMemory };
