@@ -3,6 +3,7 @@ const {
   getProjectName,
   getContainerTag,
   getRepoContainerTag,
+  getRepoSearchTags,
 } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const { loadSettings, getApiKey, getBaseUrl } = require('./lib/settings');
@@ -55,36 +56,39 @@ async function main() {
   }
 
   const projectName = getProjectName(cwd);
-  const personalTag = getContainerTag(cwd);
+  const legacySessionTag = getContainerTag(cwd);
   const repoTag = getRepoContainerTag(cwd);
+  const repoSearchTags = getRepoSearchTags(cwd);
 
   try {
     const baseUrl = getBaseUrl(cwd, projectConfig);
-    const client = new SupermemoryClient(apiKey, personalTag, { baseUrl });
+    const client = new SupermemoryClient(apiKey, repoTag, { baseUrl });
 
     console.log(`Project: ${projectName}\n`);
 
     if (containerType === 'both') {
-      const [personalResult, repoResult] = await Promise.all([
-        client.search(query, personalTag, { limit: 5 }),
-        client.search(query, repoTag, { limit: 5 }),
-      ]);
+      const searchResults = await Promise.all(
+        repoSearchTags.map((tag) => client.search(query, tag, { limit: 5 })),
+      );
 
-      if (personalResult.results?.length > 0) {
-        console.log(
-          formatSearchResults(query, personalResult.results, 'Personal'),
-        );
-      }
-      if (repoResult.results?.length > 0) {
-        if (personalResult.results?.length > 0) console.log('');
-        console.log(formatSearchResults(query, repoResult.results, 'Project'));
-      }
-      if (!personalResult.results?.length && !repoResult.results?.length) {
+      let foundAny = false;
+      searchResults.forEach((searchResult, index) => {
+        if (!searchResult.results?.length) return;
+        foundAny = true;
+        if (index > 0) console.log('');
+        const label =
+          repoSearchTags[index] === legacySessionTag
+            ? 'Legacy Session'
+            : 'Project';
+        console.log(formatSearchResults(query, searchResult.results, label));
+      });
+
+      if (!foundAny) {
         console.log(`No memories found for "${query}"`);
       }
     } else {
-      const tag = containerType === 'user' ? personalTag : repoTag;
-      const label = containerType === 'user' ? 'Personal' : 'Project';
+      const tag = containerType === 'user' ? legacySessionTag : repoTag;
+      const label = containerType === 'user' ? 'Legacy Session' : 'Project';
       const searchResult = await client.search(query, tag, { limit: 10 });
       console.log(formatSearchResults(query, searchResult.results, label));
     }
