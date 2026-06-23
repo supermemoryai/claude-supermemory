@@ -61,6 +61,15 @@ function getRepoContainerTag(cwd) {
   return `repo_${sanitizeRepoName(repoName)}`;
 }
 
+function getRepoSearchTags(cwd) {
+  const repoTag = getRepoContainerTag(cwd);
+  const legacySessionTag = getContainerTag(cwd);
+  if (repoTag === legacySessionTag) {
+    return [repoTag];
+  }
+  return [repoTag, legacySessionTag];
+}
+
 function getProjectName(cwd) {
   const gitRoot = getGitRoot(cwd);
   const basePath = gitRoot || cwd;
@@ -74,5 +83,6 @@ module.exports = {
   getGitRepoName,
   getContainerTag,
   getRepoContainerTag,
+  getRepoSearchTags,
   getProjectName,
 };
