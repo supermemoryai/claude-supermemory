@@ -10,5 +10,12 @@
   "homepage": "https://supermemory.ai",
   "repository": "https://github.com/supermemoryai/claude-supermemory",
   "license": "MIT",
-  "keywords": ["claude-code", "plugin", "supermemory", "memory", "ai", "context"]
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "supermemory",
+    "memory",
+    "ai",
+    "context"
+  ]
 }

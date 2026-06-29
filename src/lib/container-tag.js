@@ -7,7 +7,12 @@ function sha256(input) {
   return crypto.createHash('sha256').update(input).digest('hex').slice(0, 16);
 }
 
+const repoNameCache = new Map();
+
 function getGitRepoName(cwd) {
+  if (repoNameCache.has(cwd)) {
+    return repoNameCache.get(cwd);
+  }
   try {
     const remoteUrl = execSync('git remote get-url origin', {
       cwd,
@@ -15,8 +20,11 @@ function getGitRepoName(cwd) {
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
     const match = remoteUrl.match(/[/:]([^/]+?)(?:\.git)?$/);
-    return match ? match[1] : null;
+    const result = match ? match[1] : null;
+    repoNameCache.set(cwd, result);
+    return result;
   } catch {
+    repoNameCache.set(cwd, null);
     return null;
   }
 }
