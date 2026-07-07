@@ -120,9 +120,19 @@ function formatUserMessage(message) {
           error: block.is_error,
           content: block.content,
         });
-        if (compressed) {
+        const isGeneric = compressed.startsWith('Used ');
+        const fallback = truncate(cleanContent(block.content || ''), 500);
+        let resultText;
+        if (block.is_error && fallback) {
+          resultText = `${compressed} | ${fallback}`;
+        } else if (isGeneric && fallback) {
+          resultText = fallback;
+        } else {
+          resultText = compressed;
+        }
+        if (resultText) {
           parts.push(
-            `<|start|>assistant:tool_result<|message|>${toolName}(${status}): ${compressed}<|end|>`,
+            `<|start|>assistant:tool_result<|message|>${toolName}(${status}): ${resultText}<|end|>`,
           );
         }
       }
