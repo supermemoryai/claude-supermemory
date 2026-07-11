@@ -10,6 +10,10 @@ const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { formatContext, combineContexts } = require('./lib/format-context');
 const { getUserFriendlyError, isBenignError } = require('./lib/error-helpers');
 const { checkForUpdate, formatUpdateNotice } = require('./lib/version-check');
+const {
+  buildContainerRoutingPrompt,
+  saveContainerRouting,
+} = require('./lib/container-routing');
 
 const PLUGIN_VERSION = '0.0.5';
 
@@ -26,6 +30,7 @@ async function main() {
   try {
     const input = await readStdin();
     const cwd = input.cwd || process.cwd();
+    const sessionId = input.session_id;
     const projectName = getProjectName(cwd);
     const updateCheck = checkForUpdate(PLUGIN_VERSION).then((info) =>
       info ? formatUpdateNotice(info) : null,
@@ -85,12 +90,20 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
       return null;
     };
 
-    const [personalResult, repoResult] = await Promise.all([
+    const [personalResult, repoResult, containerTags] = await Promise.all([
       client
         .getProfile(personalTag, projectName)
         .catch(handleProfileError('personal')),
       client.getProfile(repoTag, projectName).catch(handleProfileError('repo')),
+      client.listContainerTags().catch(handleProfileError('container tags')),
     ]);
+
+    const availableContainerTags = containerTags || [];
+    saveContainerRouting(sessionId, availableContainerTags, personalTag);
+    const routingPrompt = buildContainerRoutingPrompt(
+      availableContainerTags,
+      personalTag,
+    );
 
     const personalContext = formatContext(
       personalResult,
@@ -133,6 +146,7 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
 No previous memories found for this project.
 Memories will be saved as you work.
 </supermemory-context>`,
+            routingPrompt,
             updateNotice,
           ]),
         },
@@ -144,6 +158,7 @@ Memories will be saved as you work.
       length: additionalContext.length,
       hasPersonal: !!personalContext,
       hasRepo: !!repoContext,
+      containerTags: availableContainerTags.length,
     });
 
     const updateNotice = await updateCheck;
@@ -152,6 +167,7 @@ Memories will be saved as you work.
         hookEventName: 'SessionStart',
         additionalContext: combineOutputParts([
           errorNotice + additionalContext,
+          routingPrompt,
           updateNotice,
         ]),
       },

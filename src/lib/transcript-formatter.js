@@ -186,6 +186,15 @@ function cleanContent(text) {
   return text
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
     .replace(/<supermemory-context>[\s\S]*?<\/supermemory-context>/g, '')
+    .replace(
+      /<supermemory-save-routing>[\s\S]*?<\/supermemory-save-routing>/g,
+      '',
+    )
+    .replace(/<!--\s*supermemory-save-container:\s*[A-Za-z0-9_-]+\s*-->/g, '')
+    .replace(
+      /<supermemory-save-container>\s*[A-Za-z0-9_-]+\s*<\/supermemory-save-container>/g,
+      '',
+    )
     .trim();
 }
 

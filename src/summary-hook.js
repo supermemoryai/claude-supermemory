@@ -16,6 +16,7 @@ const {
 } = require('./lib/transcript-formatter');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { saveLastSession } = require('./lib/last-session');
+const { getSessionContainerTag } = require('./lib/container-routing');
 
 async function main() {
   const settings = loadSettings();
@@ -64,7 +65,12 @@ async function main() {
     }
 
     const client = new SupermemoryClient(apiKey);
-    const containerTag = getContainerTag(cwd);
+    const fallbackTag = getContainerTag(cwd);
+    const containerTag = getSessionContainerTag({
+      sessionId,
+      transcriptPath,
+      fallbackTag,
+    });
     const projectName = getProjectName(cwd);
 
     const result = await client.addMemory(
@@ -73,6 +79,7 @@ async function main() {
       {
         type: 'session_turn',
         project: projectName,
+        selected_container_tag: containerTag,
         timestamp: new Date().toISOString(),
       },
       { customId: sessionId, entityContext: PERSONAL_ENTITY_CONTEXT },

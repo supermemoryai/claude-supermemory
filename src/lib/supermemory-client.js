@@ -18,6 +18,62 @@ function dedupe(items, getKey = (x) => x) {
   });
 }
 
+function getContainerTagFromRecord(record) {
+  return (
+    record?.containerTag ||
+    record?.container_tag ||
+    record?.tag ||
+    record?.id ||
+    null
+  );
+}
+
+function normalizeContainerTagsResponse(data) {
+  const records = Array.isArray(data)
+    ? data
+    : data?.containerTags ||
+      data?.container_tags ||
+      data?.tags ||
+      data?.spaces ||
+      data?.items ||
+      data?.data ||
+      [];
+
+  if (!Array.isArray(records)) return [];
+
+  return dedupe(
+    records
+      .map((record) => {
+        const containerTag = getContainerTagFromRecord(record);
+        if (!containerTag) return null;
+
+        return {
+          containerTag,
+          name: record?.name || record?.displayName || record?.title || null,
+          description: record?.description || record?.entityContext || null,
+          documentCount:
+            record?.documentCount ?? record?.document_count ?? null,
+          memoryCount: record?.memoryCount ?? record?.memory_count ?? null,
+          visibility: record?.visibility || null,
+          lastActivityAt: record?.lastActivityAt || null,
+        };
+      })
+      .filter(Boolean),
+    (tag) => tag.containerTag,
+  );
+}
+
+function createApiError(path, response, body) {
+  const message =
+    body?.error ||
+    body?.message ||
+    `Supermemory API request failed (${response.status})`;
+  const err = new Error(message);
+  err.status = response.status;
+  err.path = path;
+  return err;
+}
+
 const PERSONAL_ENTITY_CONTEXT = `Developer coding session transcript. Focus on USER message and intent.
 
 RULES:
@@ -80,6 +136,35 @@ class SupermemoryClient {
       defaultHeaders: { ...integrityHeaders, 'x-sm-source': 'claude-code' },
     });
     this.containerTag = tag;
+    this.apiKey = apiKey;
+  }
+
+  async listContainerTags() {
+    const paths = ['/v4/containertag', '/v3/container-tags/list'];
+
+    for (const path of paths) {
+      const url = new URL(path, API_URL);
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'x-sm-source': 'claude-code',
+        },
+      });
+
+      const body = await response.json().catch(() => null);
+      if (response.ok) {
+        return normalizeContainerTagsResponse(body);
+      }
+
+      if (response.status === 404 && path !== paths[paths.length - 1]) {
+        continue;
+      }
+
+      throw createApiError(path, response, body);
+    }
+
+    return [];
   }
 
   async addMemory(content, containerTag, metadata = {}, options = {}) {
@@ -165,4 +250,5 @@ module.exports = {
   SupermemoryClient,
   PERSONAL_ENTITY_CONTEXT,
   REPO_ENTITY_CONTEXT,
+  normalizeContainerTagsResponse,
 };
