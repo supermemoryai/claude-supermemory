@@ -47,6 +47,24 @@ export SUPERMEMORY_CC_API_KEY="sm_..."
 - **supermemory-search** — Ask about past work or previous sessions, Claude searches your memories
 - **supermemory-save** — Ask to save something important, Claude saves it for the team
 
+### Shared Agents memory
+
+Claude Code and `codex-supermemory` use the same two containers for a repository:
+
+- `user_project_<path-hash>` stores automatic session capture and explicit personal memories.
+- `repo_<project-name>` stores explicitly saved project knowledge.
+
+Both plugins write only to the shared containers and read from them plus the previous
+`claudecode_project_*`, `codex_user_*`, and `codex_project_*` containers. Existing
+memories remain searchable without duplicating or migrating them. Linked worktrees
+share the same path-scoped personal container unless
+`SUPERMEMORY_ISOLATE_WORKTREES=true` is set.
+
+Explicit `personalContainerTag`/`repoContainerTag` project overrides take precedence.
+For compatibility, explicit `userContainerTag`/`projectContainerTag` values in
+`~/.codex/supermemory.json` are also honored, so Claude Code and Codex continue to
+write to the same custom containers.
+
 ## Commands
 
 | Command                              | Description                              |

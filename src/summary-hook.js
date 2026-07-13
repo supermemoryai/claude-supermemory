@@ -77,6 +77,8 @@ async function main() {
       {
         type: 'session_turn',
         project: projectName,
+        sm_scope: 'personal',
+        sm_capture_mode: 'automatic',
         timestamp: new Date().toISOString(),
       },
       { customId: sessionId, entityContext: PERSONAL_ENTITY_CONTEXT },

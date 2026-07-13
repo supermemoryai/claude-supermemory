@@ -5,6 +5,10 @@ const {
   validateContainerTag,
 } = require('./validate.js');
 const { BASE_URL } = require('./constants');
+const {
+  mergeSearchResponses,
+  mergeProfileResponses,
+} = require('./result-merge');
 
 const DEFAULT_PROJECT_ID = 'claudecode_default';
 
@@ -106,17 +110,37 @@ class SupermemoryClient {
       searchMode: options.searchMode || 'hybrid',
     });
     const mapped = result.results.map((r) => ({
+      id: r.id,
       memory: r.content || r.memory || r.context || '',
       chunk: r.chunk,
       metadata: r.metadata,
       updatedAt: r.updatedAt,
       similarity: r.similarity,
+      containerTag: containerTag || this.containerTag,
     }));
     return {
       results: dedupe(mapped, (r) => r.memory),
       total: result.total,
       timing: result.timing,
     };
+  }
+
+  async searchMany(query, containerTags, options = {}) {
+    const tags = [...new Set(containerTags.filter(Boolean))];
+    const settled = await Promise.allSettled(
+      tags.map((tag) => this.search(query, tag, options)),
+    );
+    const successful = settled
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value);
+    if (successful.length === 0) {
+      const firstError = settled.find((result) => result.status === 'rejected');
+      throw (
+        firstError?.reason ||
+        new Error('No memory containers could be searched')
+      );
+    }
+    return mergeSearchResponses(successful, options.limit || 10);
   }
 
   async getProfile(containerTag, query) {
@@ -158,6 +182,23 @@ class SupermemoryClient {
       profile: { static: staticFacts, dynamic: dynamicFacts },
       searchResults,
     };
+  }
+
+  async getProfileMany(containerTags, query, options = {}) {
+    const tags = [...new Set(containerTags.filter(Boolean))];
+    const settled = await Promise.allSettled(
+      tags.map((tag) => this.getProfile(tag, query)),
+    );
+    const successful = settled
+      .filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value);
+    if (successful.length === 0) {
+      const firstError = settled.find((result) => result.status === 'rejected');
+      throw (
+        firstError?.reason || new Error('No memory profiles could be loaded')
+      );
+    }
+    return mergeProfileResponses(successful, options.limit || 10);
   }
 }
 

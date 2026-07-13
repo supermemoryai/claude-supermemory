@@ -42,6 +42,8 @@ async function main() {
       {
         type: 'project-knowledge',
         project: projectName,
+        sm_scope: 'project',
+        sm_capture_mode: 'explicit',
         timestamp: new Date().toISOString(),
       },
       { entityContext: REPO_ENTITY_CONTEXT },

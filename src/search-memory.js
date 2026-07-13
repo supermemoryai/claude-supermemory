@@ -1,8 +1,8 @@
 const { SupermemoryClient } = require('./lib/supermemory-client');
 const {
   getProjectName,
-  getContainerTag,
-  getRepoContainerTag,
+  getPersonalReadTags,
+  getProjectReadTags,
 } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const { loadSettings, getApiKey, getBaseUrl } = require('./lib/settings');
@@ -55,19 +55,19 @@ async function main() {
   }
 
   const projectName = getProjectName(cwd);
-  const personalTag = getContainerTag(cwd);
-  const repoTag = getRepoContainerTag(cwd);
+  const personalTags = getPersonalReadTags(cwd);
+  const repoTags = getProjectReadTags(cwd);
 
   try {
     const baseUrl = getBaseUrl(cwd, projectConfig);
-    const client = new SupermemoryClient(apiKey, personalTag, { baseUrl });
+    const client = new SupermemoryClient(apiKey, personalTags[0], { baseUrl });
 
     console.log(`Project: ${projectName}\n`);
 
     if (containerType === 'both') {
       const [personalResult, repoResult] = await Promise.all([
-        client.search(query, personalTag, { limit: 5 }),
-        client.search(query, repoTag, { limit: 5 }),
+        client.searchMany(query, personalTags, { limit: 5 }),
+        client.searchMany(query, repoTags, { limit: 5 }),
       ]);
 
       if (personalResult.results?.length > 0) {
@@ -83,9 +83,9 @@ async function main() {
         console.log(`No memories found for "${query}"`);
       }
     } else {
-      const tag = containerType === 'user' ? personalTag : repoTag;
+      const tags = containerType === 'user' ? personalTags : repoTags;
       const label = containerType === 'user' ? 'Personal' : 'Project';
-      const searchResult = await client.search(query, tag, { limit: 10 });
+      const searchResult = await client.searchMany(query, tags, { limit: 10 });
       console.log(formatSearchResults(query, searchResult.results, label));
     }
   } catch (err) {

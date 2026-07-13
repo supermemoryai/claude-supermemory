@@ -42,6 +42,8 @@ async function main() {
       {
         type: 'manual',
         project: projectName,
+        sm_scope: 'personal',
+        sm_capture_mode: 'explicit',
         timestamp: new Date().toISOString(),
       },
       { entityContext: PERSONAL_ENTITY_CONTEXT },

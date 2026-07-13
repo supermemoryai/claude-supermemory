@@ -1,8 +1,8 @@
 const { SupermemoryClient } = require('./lib/supermemory-client');
 const {
-  getContainerTag,
-  getRepoContainerTag,
   getProjectName,
+  getPersonalReadTags,
+  getProjectReadTags,
 } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
@@ -68,10 +68,10 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
 
     const baseUrl = getBaseUrl(cwd, projectConfig);
     const client = new SupermemoryClient(apiKey, undefined, { baseUrl });
-    const personalTag = getContainerTag(cwd);
-    const repoTag = getRepoContainerTag(cwd);
+    const personalTags = getPersonalReadTags(cwd);
+    const repoTags = getProjectReadTags(cwd);
 
-    debugLog(settings, 'Fetching contexts', { personalTag, repoTag });
+    debugLog(settings, 'Fetching contexts', { personalTags, repoTags });
 
     const apiErrors = [];
 
@@ -94,9 +94,15 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
 
     const [personalResult, repoResult] = await Promise.all([
       client
-        .getProfile(personalTag, projectName)
+        .getProfileMany(personalTags, projectName, {
+          limit: settings.maxProfileItems,
+        })
         .catch(handleProfileError('personal')),
-      client.getProfile(repoTag, projectName).catch(handleProfileError('repo')),
+      client
+        .getProfileMany(repoTags, projectName, {
+          limit: settings.maxProfileItems,
+        })
+        .catch(handleProfileError('repo')),
     ]);
 
     const personalContext = formatContext(
