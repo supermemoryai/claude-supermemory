@@ -1,8 +1,8 @@
 const {
   SupermemoryClient,
-  PERSONAL_ENTITY_CONTEXT,
+  REPO_ENTITY_CONTEXT,
 } = require('./lib/supermemory-client');
-const { getContainerTag, getProjectName } = require('./lib/container-tag');
+const { getRepoContainerTag, getProjectName } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
   loadSettings,
@@ -68,7 +68,7 @@ async function main() {
 
     const baseUrl = getBaseUrl(cwd, projectConfig);
     const client = new SupermemoryClient(apiKey, undefined, { baseUrl });
-    const containerTag = getContainerTag(cwd);
+    const containerTag = getRepoContainerTag(cwd);
     const projectName = getProjectName(cwd);
 
     const result = await client.addMemory(
@@ -79,7 +79,7 @@ async function main() {
         project: projectName,
         timestamp: new Date().toISOString(),
       },
-      { customId: sessionId, entityContext: PERSONAL_ENTITY_CONTEXT },
+      { customId: sessionId, entityContext: REPO_ENTITY_CONTEXT },
     );
 
     if (result?.id) {

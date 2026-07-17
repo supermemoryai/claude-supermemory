@@ -116,7 +116,9 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
     );
 
     const additionalContext = combineContexts([
-      { label: '### Personal Memories', content: personalContext },
+      ...(personalContext
+        ? [{ label: '### Legacy Session Memories', content: personalContext }]
+        : []),
       {
         label: '### Project Knowledge (Shared across team)',
         content: repoContext,

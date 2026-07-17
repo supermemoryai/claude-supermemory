@@ -1,8 +1,8 @@
 const {
   SupermemoryClient,
-  PERSONAL_ENTITY_CONTEXT,
+  REPO_ENTITY_CONTEXT,
 } = require('./lib/supermemory-client');
-const { getContainerTag, getProjectName } = require('./lib/container-tag');
+const { getRepoContainerTag, getProjectName } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const { loadSettings, getApiKey, getBaseUrl } = require('./lib/settings');
 const { getUserFriendlyError } = require('./lib/error-helpers');
@@ -30,7 +30,7 @@ async function main() {
     return;
   }
 
-  const containerTag = getContainerTag(cwd);
+  const containerTag = getRepoContainerTag(cwd);
   const projectName = getProjectName(cwd);
 
   try {
@@ -44,7 +44,7 @@ async function main() {
         project: projectName,
         timestamp: new Date().toISOString(),
       },
-      { entityContext: PERSONAL_ENTITY_CONTEXT },
+      { entityContext: REPO_ENTITY_CONTEXT },
     );
 
     console.log(`Memory saved to project: ${projectName}`);

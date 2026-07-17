@@ -1,6 +1,6 @@
 {
   "name": "claude-supermemory",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "Persistent memory for Claude Code using Supermemory",
   "private": true,
   "engines": {
