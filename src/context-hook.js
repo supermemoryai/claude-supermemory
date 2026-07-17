@@ -17,6 +17,33 @@ const { formatContext, combineContexts } = require('./lib/format-context');
 const { getUserFriendlyError, isBenignError } = require('./lib/error-helpers');
 const { PLUGIN_VERSION } = require('./lib/plugin-version');
 const { checkForUpdate, formatUpdateNotice } = require('./lib/version-check');
+const { writeState } = require('./lib/statusline-state');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
+
+const STATUSLINE_ONBOARDED_FILE = path.join(os.homedir(), '.supermemory-claude', 'statusline-onboarded');
+
+function getStatuslineOnboardingNotice() {
+  try {
+    if (fs.existsSync(STATUSLINE_ONBOARDED_FILE)) return null;
+  } catch {
+    // continue
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(STATUSLINE_ONBOARDED_FILE), { recursive: true });
+    fs.writeFileSync(STATUSLINE_ONBOARDED_FILE, new Date().toISOString());
+  } catch {
+    // best-effort
+  }
+
+  return `<supermemory-tip>
+**Supermemory statusline** — See memory activity live in your Claude Code statusline.
+Run \`/supermemory:statusline\` to set it up. Shows injected memory count, search results, and sync status.
+Learn more at https://supermemory.ai/docs/claude-code
+</supermemory-tip>`;
+}
 
 function combineOutputParts(parts) {
   return parts
@@ -115,6 +142,22 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
       false,
     );
 
+    const personalCount =
+      (personalResult?.profile?.static?.length || 0) +
+      (personalResult?.profile?.dynamic?.length || 0);
+    const repoCount =
+      (repoResult?.profile?.static?.length || 0) +
+      (repoResult?.profile?.dynamic?.length || 0);
+    const totalInjected = personalCount + repoCount;
+
+    writeState({
+      memoriesInjected: totalInjected,
+      personalCount,
+      repoCount,
+      sessionActive: true,
+      ingesting: false,
+    });
+
     const additionalContext = combineContexts([
       { label: '### Personal Memories', content: personalContext },
       {
@@ -130,6 +173,7 @@ Or set SUPERMEMORY_CC_API_KEY environment variable manually.
 
     if (!additionalContext) {
       const updateNotice = await updateCheck;
+      const statuslineNotice = getStatuslineOnboardingNotice();
       writeOutput({
         hookSpecificOutput: {
           hookEventName: 'SessionStart',
@@ -141,6 +185,7 @@ No previous memories found for this project.
 Memories will be saved as you work.
 </supermemory-context>`,
             updateNotice,
+            statuslineNotice,
           ]),
         },
       });
@@ -154,12 +199,14 @@ Memories will be saved as you work.
     });
 
     const updateNotice = await updateCheck;
+    const statuslineNotice = getStatuslineOnboardingNotice();
     writeOutput({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
         additionalContext: combineOutputParts([
           errorNotice + additionalContext,
           updateNotice,
+          statuslineNotice,
         ]),
       },
     });
