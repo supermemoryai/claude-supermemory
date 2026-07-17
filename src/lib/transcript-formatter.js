@@ -6,8 +6,7 @@ const {
   shouldIncludeTool,
   getSignalConfig,
 } = require('./settings');
-
-const MAX_TOOL_RESULT_LENGTH = 500;
+const { compressObservation } = require('./compress');
 const TRACKER_DIR = path.join(os.homedir(), '.supermemory-claude', 'trackers');
 
 let toolUseMap = new Map();
@@ -108,18 +107,32 @@ function formatUserMessage(message) {
         }
       } else if (block.type === 'tool_result') {
         const toolId = block.tool_use_id || '';
-        const toolName = toolUseMap.get(toolId) || 'Unknown';
+        const toolEntry = toolUseMap.get(toolId) || {
+          name: 'Unknown',
+          input: {},
+        };
+        const toolName = toolEntry.name;
         if (!shouldIncludeTool(toolName, currentIncludeList)) {
           continue;
         }
-        const resultContent = truncate(
-          cleanContent(block.content || ''),
-          MAX_TOOL_RESULT_LENGTH,
-        );
         const status = block.is_error ? 'error' : 'success';
-        if (resultContent) {
+        const compressed = compressObservation(toolName, toolEntry.input, {
+          error: block.is_error,
+          content: block.content,
+        });
+        const isGeneric = compressed.startsWith('Used ');
+        const fallback = truncate(cleanContent(block.content || ''), 500);
+        let resultText;
+        if (block.is_error && fallback) {
+          resultText = `${compressed} | ${fallback}`;
+        } else if (isGeneric && fallback) {
+          resultText = fallback;
+        } else {
+          resultText = compressed;
+        }
+        if (resultText) {
           parts.push(
-            `<|start|>assistant:tool_result<|message|>${toolName}(${status}): ${resultContent}<|end|>`,
+            `<|start|>assistant:tool_result<|message|>${toolName}(${status}): ${resultText}<|end|>`,
           );
         }
       }
@@ -149,7 +162,7 @@ function formatAssistantMessage(message) {
       const toolName = block.name || 'Unknown';
       const toolId = block.id || '';
       if (toolId) {
-        toolUseMap.set(toolId, toolName);
+        toolUseMap.set(toolId, { name: toolName, input: block.input });
       }
       if (!shouldIncludeTool(toolName, currentIncludeList)) {
         continue;
@@ -501,7 +514,6 @@ module.exports = {
   formatNewEntries,
   formatSignalEntries,
   cleanContent,
-  truncate,
   getLastCapturedUuid,
   setLastCapturedUuid,
   getTextFromEntry,
