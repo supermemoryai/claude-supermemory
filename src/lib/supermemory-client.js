@@ -8,6 +8,8 @@ const { BASE_URL } = require('./constants');
 const {
   mergeSearchResponses,
   mergeProfileResponses,
+  searchResultKey,
+  searchResultText,
 } = require('./result-merge');
 
 const DEFAULT_PROJECT_ID = 'claudecode_default';
@@ -107,7 +109,7 @@ class SupermemoryClient {
     const result = await this.client.search.memories(payload);
     const mapped = result.results.map((r) => ({
       id: r.id,
-      memory: r.content || r.memory || r.context || '',
+      memory: searchResultText(r),
       chunk: r.chunk,
       metadata: r.metadata,
       updatedAt: r.updatedAt,
@@ -115,7 +117,9 @@ class SupermemoryClient {
       containerTag: containerTag || this.containerTag,
     }));
     return {
-      results: dedupe(mapped, (r) => r.memory),
+      // searchResultKey falls back to the id, so a hit with no recognised
+      // text field is still returned rather than deduped away.
+      results: dedupe(mapped, searchResultKey),
       total: result.total,
       timing: result.timing,
     };
@@ -188,13 +192,16 @@ class SupermemoryClient {
     if (result.searchResults) {
       const mapped = result.searchResults.results.map((r) => ({
         id: r.id,
-        memory: r.content || r.context || '',
+        memory: searchResultText(r),
         similarity: r.similarity,
         title: r.title,
         updatedAt: r.updatedAt,
       }));
       searchResults = {
-        results: dedupeWithSeen(mapped, (r) => r.memory),
+        // Keyed on the raw text so a hit that repeats a profile fact is still
+        // suppressed by the shared `seen` set, with an id fallback so an
+        // unrecognised shape degrades to a duplicate rather than to nothing.
+        results: dedupeWithSeen(mapped, (r) => r.memory || `id:${r.id}`),
         total: result.searchResults.total,
         timing: result.searchResults.timing,
       };

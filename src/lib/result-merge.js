@@ -20,6 +20,12 @@ function searchResultKey(result) {
   return result.id ? `id:${result.id}` : '';
 }
 
+// The text of a hit, across every field name the API has used for it.
+// `/v4/search` and `/v4/profile` currently return it as `chunk`.
+function searchResultText(hit) {
+  return hit.content || hit.memory || hit.context || hit.chunk || '';
+}
+
 function compareSearchResults(a, b) {
   const aScore = a.similarity ?? -1;
   const bScore = b.similarity ?? -1;
@@ -61,4 +67,9 @@ function mergeProfileResponses(responses, limit = 10) {
   };
 }
 
-module.exports = { mergeSearchResponses, mergeProfileResponses };
+module.exports = {
+  mergeSearchResponses,
+  mergeProfileResponses,
+  searchResultKey,
+  searchResultText,
+};

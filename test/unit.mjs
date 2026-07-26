@@ -11,6 +11,8 @@ const require = createRequire(import.meta.url);
 const {
   mergeProfileResponses,
   mergeSearchResponses,
+  searchResultKey,
+  searchResultText,
 } = require('../src/lib/result-merge.js');
 
 function hash16(value) {
@@ -149,5 +151,38 @@ describe('cross-container result merging', () => {
     ]);
     assert.deepEqual(merged.profile.static, ['Uses pnpm']);
     assert.deepEqual(merged.profile.dynamic, ['Working on auth', 'Testing agents']);
+  });
+});
+
+describe('search hit text extraction', () => {
+  test('reads the text /v4/search actually returns it in', () => {
+    // A verbatim /v4/search hit: the text is in `chunk`, and none of
+    // content/memory/context are present.
+    const hit = {
+      id: 'T5EQzJsD8CvfM3BWWSedwo',
+      chunk: 'Deploys run from CI, never from a laptop.',
+      metadata: { type: 'project-knowledge' },
+      similarity: 0.66,
+      chunks: [],
+    };
+    assert.equal(searchResultText(hit), 'Deploys run from CI, never from a laptop.');
+  });
+
+  test('prefers the older field names when present', () => {
+    assert.equal(searchResultText({ content: 'a', memory: 'b', chunk: 'c' }), 'a');
+    assert.equal(searchResultText({ memory: 'b', chunk: 'c' }), 'b');
+    assert.equal(searchResultText({ context: 'c2', chunk: 'c' }), 'c2');
+    assert.equal(searchResultText({}), '');
+  });
+
+  test('an unrecognised hit shape degrades to a duplicate, never to nothing', () => {
+    // If the API renames the text field again, hits must still surface —
+    // keying on empty text would drop every one of them silently.
+    const merged = mergeSearchResponses(
+      [{ results: [{ id: 'x', memory: '' }, { id: 'y', memory: '' }] }],
+      10,
+    );
+    assert.deepEqual(merged.results.map((result) => result.id), ['x', 'y']);
+    assert.equal(searchResultKey({ id: 'x', memory: '' }), 'id:x');
   });
 });
