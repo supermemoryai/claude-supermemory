@@ -19,6 +19,7 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const {
   formatNewEntries,
   formatSignalEntries,
+  setLastCapturedUuid,
 } = require('./lib/transcript-formatter');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { saveLastSession } = require('./lib/last-session');
@@ -54,17 +55,17 @@ async function main() {
 
     debugLog(settings, 'Signal extraction', { enabled: useSignalExtraction });
 
-    let formatted;
+    let capture;
     if (useSignalExtraction) {
-      formatted = formatSignalEntries(transcriptPath, sessionId, cwd);
+      capture = formatSignalEntries(transcriptPath, sessionId, cwd);
       debugLog(settings, 'Signal extraction result', {
-        hasContent: !!formatted,
+        hasContent: !!capture,
       });
     } else {
-      formatted = formatNewEntries(transcriptPath, sessionId, cwd);
+      capture = formatNewEntries(transcriptPath, sessionId, cwd);
     }
 
-    if (!formatted) {
+    if (!capture) {
       debugLog(settings, 'No new content to save');
       writeOutput({ continue: true });
       return;
@@ -75,8 +76,22 @@ async function main() {
     const containerTag = getContainerTag(cwd);
     const projectName = getProjectName(cwd);
 
+    // The session document upserts by customId, and the backend APPENDS a
+    // new revision only once the previous one finished processing — an
+    // append sent mid-processing is silently dropped. If the doc is still
+    // processing, skip this capture WITHOUT advancing the tracker: the
+    // delta simply carries over into the next Stop.
+    const docStatus = await client.getDocumentStatus(sessionId);
+    if (docStatus && docStatus !== 'done' && docStatus !== 'failed') {
+      debugLog(settings, 'Session doc still processing; deferring capture', {
+        docStatus,
+      });
+      writeOutput({ continue: true });
+      return;
+    }
+
     const result = await client.addMemory(
-      formatted,
+      capture.content,
       containerTag,
       {
         type: 'session_turn',
@@ -89,11 +104,16 @@ async function main() {
       { customId: sessionId, entityContext: PERSONAL_ENTITY_CONTEXT },
     );
 
+    // Advance the tracker only now that the capture is persisted — a failed
+    // upload leaves the cursor untouched, so the delta retries next Stop
+    // instead of being permanently lost.
+    setLastCapturedUuid(sessionId, capture.cursor);
+
     if (result?.id) {
       saveLastSession({ id: result.id, containerTag });
     }
 
-    debugLog(settings, 'Session turn saved', { length: formatted.length });
+    debugLog(settings, 'Session turn saved', { length: capture.content.length });
     writeOutput({ continue: true });
   } catch (err) {
     const friendly = getUserFriendlyError(err);

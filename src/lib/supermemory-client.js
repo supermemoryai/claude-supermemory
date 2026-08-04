@@ -78,6 +78,34 @@ class SupermemoryClient {
       defaultHeaders: { ...integrityHeaders, 'x-sm-source': 'claude-code' },
     });
     this.containerTag = tag;
+    this.apiKey = apiKey;
+    this.baseUrl = options.baseUrl || BASE_URL;
+  }
+
+  /**
+   * Processing status of a document ("queued" | "extracting" | "indexing" |
+   * "done" | "failed" | ...), or null when the document does not exist yet
+   * or the lookup fails (fail-open: callers treat null as "safe to write").
+   *
+   * Needed because /v3/documents upserts by customId APPEND only once the
+   * previous revision reached a terminal status — an append that arrives
+   * while the document is still processing is silently dropped.
+   */
+  async getDocumentStatus(customId) {
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/v3/documents/${encodeURIComponent(customId)}`,
+        {
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          signal: AbortSignal.timeout(5000),
+        },
+      );
+      if (!res.ok) return null;
+      const doc = await res.json();
+      return doc?.status || null;
+    } catch {
+      return null;
+    }
   }
 
   async addMemory(content, containerTag, metadata = {}, options = {}) {

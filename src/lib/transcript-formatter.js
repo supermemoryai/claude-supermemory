@@ -451,9 +451,10 @@ function formatSignalEntries(transcriptPath, sessionId, cwd) {
 
   if (result.length < 100) return null;
 
-  setLastCapturedUuid(sessionId, lastEntry.uuid);
-
-  return result;
+  // NOTE: the tracker is deliberately NOT advanced here. The caller advances
+  // it (via `cursor`) only after the capture is successfully persisted, so a
+  // failed or skipped upload retries on the next Stop instead of being lost.
+  return { content: result, cursor: lastEntry.uuid };
 }
 
 function formatNewEntries(transcriptPath, sessionId, cwd) {
@@ -489,9 +490,8 @@ function formatNewEntries(transcriptPath, sessionId, cwd) {
 
   if (result.length < 100) return null;
 
-  setLastCapturedUuid(sessionId, lastEntry.uuid);
-
-  return result;
+  // See formatSignalEntries: caller advances the tracker after persistence.
+  return { content: result, cursor: lastEntry.uuid };
 }
 
 module.exports = {
