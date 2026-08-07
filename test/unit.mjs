@@ -151,3 +151,69 @@ describe('cross-container result merging', () => {
     assert.deepEqual(merged.profile.dynamic, ['Working on auth', 'Testing agents']);
   });
 });
+
+describe('save-project-memory command-line guard', () => {
+  const scriptPath = join(
+    process.cwd(),
+    'plugin',
+    'scripts',
+    'save-project-memory.cjs',
+  );
+
+  function run(args) {
+    return spawnSync('node', [scriptPath, ...args], {
+      encoding: 'utf-8',
+      timeout: 10000,
+      env: { ...process.env, SUPERMEMORY_CC_API_KEY: '' },
+    });
+  }
+
+  test('--help prints usage instead of being saved as memory content', () => {
+    const result = run(['--help']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Usage: node save-project-memory\.cjs/);
+    assert.doesNotMatch(result.stdout, /Project knowledge saved/);
+  });
+
+  test('no arguments prints usage without attempting to save', () => {
+    const result = run([]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Usage: node save-project-memory\.cjs/);
+  });
+});
+
+describe('status reports real connectivity instead of a key-prefix guess', () => {
+  const scriptPath = join(process.cwd(), 'plugin', 'scripts', 'status.cjs');
+
+  function run(t, extraEnv) {
+    const { repo, home } = makeRepo(t, 'Status Project');
+    const result = spawnSync('node', [scriptPath], {
+      cwd: repo,
+      encoding: 'utf-8',
+      timeout: 20000,
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        SUPERMEMORY_CC_API_KEY: '',
+        ...extraEnv,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  }
+
+  test('reports not authenticated when no key is configured', (t) => {
+    const stdout = run(t, {});
+    assert.match(stdout, /Supermemory is not authenticated\./);
+  });
+
+  test('does not report connected on a well-formed key alone when the backend is unreachable', (t) => {
+    const stdout = run(t, {
+      SUPERMEMORY_CC_API_KEY: `sm_${'a'.repeat(24)}`,
+      SUPERMEMORY_API_URL: 'http://127.0.0.1:1',
+    });
+    assert.doesNotMatch(stdout, /Supermemory is connected\./);
+    assert.match(stdout, /Supermemory is unreachable\./);
+  });
+});

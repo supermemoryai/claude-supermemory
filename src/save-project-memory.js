@@ -12,12 +12,16 @@ const { loadSettings, getApiKey, getBaseUrl } = require('./lib/settings');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 
 async function main() {
-  const content = process.argv.slice(2).join(' ');
+  const args = process.argv.slice(2);
+  const content = args.join(' ');
 
-  if (!content || !content.trim()) {
-    console.log(
-      'No content provided. Usage: node save-project-memory.cjs "content to save"',
-    );
+  if (
+    args.length === 0 ||
+    args.includes('--help') ||
+    args.includes('-h') ||
+    !content.trim()
+  ) {
+    console.log('Usage: node save-project-memory.cjs "content to save"');
     return;
   }
 

@@ -1,13 +1,15 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const { CREDENTIALS_FILE } = require('./lib/auth');
-const { SETTINGS_FILE } = require('./lib/settings');
+const { SETTINGS_FILE, getBaseUrl } = require('./lib/settings');
 const {
   getProjectName,
   getContainerTag,
   getAllReadTags,
 } = require('./lib/container-tag');
-const { getConfigPath } = require('./lib/project-config');
+const { getConfigPath, loadProjectConfig } = require('./lib/project-config');
+const { SupermemoryClient } = require('./lib/supermemory-client');
+const { getUserFriendlyError } = require('./lib/error-helpers');
 
 function readJson(filePath) {
   try {
@@ -83,22 +85,49 @@ function resolveApiKey(cwd) {
   };
 }
 
-function main() {
+async function checkConnection(apiKey, containerTag, baseUrl) {
+  try {
+    const client = new SupermemoryClient(apiKey, containerTag, { baseUrl });
+    // A minimal, read-only call: proves the key and baseUrl actually reach
+    // a live Supermemory backend, rather than just matching a string prefix.
+    await client.search('supermemory-status-check', containerTag, {
+      limit: 1,
+    });
+    return { connected: true };
+  } catch (err) {
+    return { connected: false, reason: getUserFriendlyError(err) };
+  }
+}
+
+async function main() {
   const cwd = process.cwd();
   const projectName = getProjectName(cwd);
   const auth = resolveApiKey(cwd);
-  const statusLabel = auth.apiKey?.startsWith('sm_')
-    ? 'connected'
-    : 'not authenticated';
+  const containerTag = getContainerTag(cwd);
+
+  let statusLabel = 'not authenticated';
+  let connectionDetail = null;
+
+  if (auth.apiKey?.startsWith('sm_')) {
+    const projectConfig = loadProjectConfig(cwd);
+    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const probe = await checkConnection(auth.apiKey, containerTag, baseUrl);
+    statusLabel = probe.connected ? 'connected' : 'unreachable';
+    if (!probe.connected) connectionDetail = probe.reason;
+  }
 
   console.log(`Supermemory is ${statusLabel}.`);
+  if (connectionDetail) console.log(`  (${connectionDetail})`);
   console.log('');
   console.log('Status:');
   console.log(`- Project: ${projectName}`);
-  console.log(`- Project container: ${getContainerTag(cwd)}`);
+  console.log(`- Project container: ${containerTag}`);
   console.log(`- Reads (including legacy): ${getAllReadTags(cwd).join(', ')}`);
   console.log(`- API key source: ${displayPath(auth.source)}`);
   console.log(`- API key: ${maskApiKey(auth.apiKey)}`);
 }
 
-main();
+main().catch((err) => {
+  console.error(`Fatal error: ${err.message}`);
+  process.exit(1);
+});
