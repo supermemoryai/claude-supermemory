@@ -69,7 +69,8 @@ function formatContext(
       const pct =
         r.similarity != null ? `[${Math.round(r.similarity * 100)}%]` : '';
       const prefix = timeStr ? `[${timeStr}] ` : '';
-      return `- ${prefix}${memory} ${pct}`.trim();
+      const label = r.title ? `${r.title}: ` : '';
+      return `- ${prefix}${label}${memory} ${pct}`.trim();
     });
     sections.push(
       `## Relevant Memories (with relevance %)\n${lines.join('\n')}`,
@@ -117,7 +118,8 @@ function formatSearchResults(query, results, label) {
     const pct =
       r.similarity != null ? `[${Math.round(r.similarity * 100)}%]` : '';
     const prefix = timeStr ? `[${timeStr}] ` : '';
-    return `${prefix}${memory} ${pct}`.trim();
+    const label = r.title ? `${r.title}: ` : '';
+    return `${prefix}${label}${memory} ${pct}`.trim();
   });
 
   return `${header}\n${lines.join('\n')}`;

@@ -109,6 +109,7 @@ class SupermemoryClient {
       id: r.id,
       memory: r.content || r.memory || r.context || '',
       chunk: r.chunk,
+      title: r.title,
       metadata: r.metadata,
       updatedAt: r.updatedAt,
       similarity: r.similarity,

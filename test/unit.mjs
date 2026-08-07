@@ -12,6 +12,10 @@ const {
   mergeProfileResponses,
   mergeSearchResponses,
 } = require('../src/lib/result-merge.js');
+const {
+  formatSearchResults,
+  formatContext,
+} = require('../src/lib/format-context.js');
 
 function hash16(value) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16);
@@ -149,5 +153,39 @@ describe('cross-container result merging', () => {
     ]);
     assert.deepEqual(merged.profile.static, ['Uses pnpm']);
     assert.deepEqual(merged.profile.dynamic, ['Working on auth', 'Testing agents']);
+  });
+});
+
+describe('search result titles are shown when present', () => {
+  test('formatSearchResults labels a hit with its title', () => {
+    const output = formatSearchResults(
+      'deploys',
+      [{ memory: 'Deploys run from CI, never from a laptop.', title: 'Deploy policy' }],
+      'Project',
+    );
+    assert.match(output, /Deploy policy: Deploys run from CI, never from a laptop\./);
+  });
+
+  test('formatSearchResults omits the label when there is no title', () => {
+    const output = formatSearchResults(
+      'deploys',
+      [{ memory: 'Deploys run from CI, never from a laptop.' }],
+      'Project',
+    );
+    assert.doesNotMatch(output, /: Deploys run from CI/);
+  });
+
+  test('formatContext labels relevant memories with their title too', () => {
+    const output = formatContext(
+      {
+        profile: { static: [], dynamic: [] },
+        searchResults: {
+          results: [{ memory: 'Uses Drizzle over Prisma.', title: 'ORM choice' }],
+        },
+      },
+      false,
+      true,
+    );
+    assert.match(output, /ORM choice: Uses Drizzle over Prisma\./);
   });
 });
