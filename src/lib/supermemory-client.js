@@ -107,7 +107,7 @@ class SupermemoryClient {
     const result = await this.client.search.memories(payload);
     const mapped = result.results.map((r) => ({
       id: r.id,
-      memory: r.content || r.memory || r.context || '',
+      memory: r.content || r.memory || r.context || r.chunk || '',
       chunk: r.chunk,
       metadata: r.metadata,
       updatedAt: r.updatedAt,
@@ -115,7 +115,7 @@ class SupermemoryClient {
       containerTag: containerTag || this.containerTag,
     }));
     return {
-      results: dedupe(mapped, (r) => r.memory),
+      results: dedupe(mapped, (r) => r.memory || r.id),
       total: result.total,
       timing: result.timing,
     };
@@ -188,13 +188,13 @@ class SupermemoryClient {
     if (result.searchResults) {
       const mapped = result.searchResults.results.map((r) => ({
         id: r.id,
-        memory: r.content || r.context || '',
+        memory: r.content || r.context || r.chunk || '',
         similarity: r.similarity,
         title: r.title,
         updatedAt: r.updatedAt,
       }));
       searchResults = {
-        results: dedupeWithSeen(mapped, (r) => r.memory),
+        results: dedupeWithSeen(mapped, (r) => r.memory || r.id),
         total: result.searchResults.total,
         timing: result.searchResults.timing,
       };

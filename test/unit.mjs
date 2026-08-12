@@ -12,6 +12,7 @@ const {
   mergeProfileResponses,
   mergeSearchResponses,
 } = require('../src/lib/result-merge.js');
+const { SupermemoryClient } = require('../dist/lib/supermemory-client.js');
 
 function hash16(value) {
   return createHash('sha256').update(value).digest('hex').slice(0, 16);
@@ -149,5 +150,73 @@ describe('cross-container result merging', () => {
     ]);
     assert.deepEqual(merged.profile.static, ['Uses pnpm']);
     assert.deepEqual(merged.profile.dynamic, ['Working on auth', 'Testing agents']);
+  });
+});
+
+describe('scoped search chunk fallback (#86)', () => {
+  function makeClient() {
+    return new SupermemoryClient('sm_testkey1234567890', 'repo_test__aaaaaaaaaaaaaaaa');
+  }
+
+  test('search() recovers text from a chunk-shaped filtered response', async () => {
+    const client = makeClient();
+    client.client.search.memories = async () => ({
+      results: [
+        { id: 'a', chunk: 'first chunked memory', similarity: 0.9 },
+        { id: 'b', chunk: 'second chunked memory', similarity: 0.8 },
+      ],
+      total: 2,
+      timing: 1,
+    });
+    const result = await client.search('q', 'repo_test__aaaaaaaaaaaaaaaa', {});
+    assert.deepEqual(
+      result.results.map((r) => r.memory),
+      ['first chunked memory', 'second chunked memory'],
+    );
+  });
+
+  test('search() still dedupes an item with neither text nor chunk, keyed on id', async () => {
+    const client = makeClient();
+    client.client.search.memories = async () => ({
+      results: [{ id: 'only-id' }],
+      total: 1,
+      timing: 1,
+    });
+    const result = await client.search('q', 'repo_test__aaaaaaaaaaaaaaaa', {});
+    assert.deepEqual(
+      result.results.map((r) => r.id),
+      ['only-id'],
+    );
+  });
+
+  test('search() is unaffected when the response already carries content', async () => {
+    const client = makeClient();
+    client.client.search.memories = async () => ({
+      results: [{ id: 'a', content: 'unfiltered memory', similarity: 0.9 }],
+      total: 1,
+      timing: 1,
+    });
+    const result = await client.search('q', 'repo_test__aaaaaaaaaaaaaaaa', {});
+    assert.deepEqual(
+      result.results.map((r) => r.memory),
+      ['unfiltered memory'],
+    );
+  });
+
+  test('getProfile() recovers text from a chunk-shaped filtered searchResults response', async () => {
+    const client = makeClient();
+    client.client.profile = async () => ({
+      profile: { static: [], dynamic: [] },
+      searchResults: {
+        results: [{ id: 'a', chunk: 'chunked profile hit', similarity: 0.7 }],
+        total: 1,
+        timing: 1,
+      },
+    });
+    const result = await client.getProfile('repo_test__aaaaaaaaaaaaaaaa', 'q', {});
+    assert.deepEqual(
+      result.searchResults.results.map((r) => r.memory),
+      ['chunked profile hit'],
+    );
   });
 });

@@ -6,6 +6,7 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 const OUT = path.join(ROOT, 'plugin', 'scripts');
+const LIB_OUT = path.join(ROOT, 'dist', 'lib');
 
 const hooks = [
   'context-hook',
@@ -17,6 +18,10 @@ const hooks = [
   'save-project-memory',
   'status',
 ];
+
+// Standalone, unminified library bundles so ESM-syntax deps (e.g. validate.js)
+// can be required directly in tests without needing esbuild at test time.
+const libs = ['supermemory-client'];
 
 async function build() {
   console.log('Building hooks...\n');
@@ -45,6 +50,34 @@ async function build() {
       console.log(`  ${hook}.cjs (${(stats.size / 1024).toFixed(1)} KB)`);
     } catch (err) {
       console.error(`Failed to build ${hook}:`, err.message);
+      process.exit(1);
+    }
+  }
+
+  console.log('\nBuilding library bundles...\n');
+
+  fs.mkdirSync(LIB_OUT, { recursive: true });
+
+  for (const lib of libs) {
+    const entry = path.join(SRC, 'lib', `${lib}.js`);
+    const out = path.join(LIB_OUT, `${lib}.js`);
+
+    try {
+      await esbuild.build({
+        entryPoints: [entry],
+        bundle: true,
+        platform: 'node',
+        target: 'node18',
+        format: 'cjs',
+        outfile: out,
+        minify: false,
+        external: ['supermemory'],
+      });
+
+      const stats = fs.statSync(out);
+      console.log(`  lib/${lib}.js (${(stats.size / 1024).toFixed(1)} KB)`);
+    } catch (err) {
+      console.error(`Failed to build lib/${lib}:`, err.message);
       process.exit(1);
     }
   }
