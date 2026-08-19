@@ -76,7 +76,8 @@ function readSeenHashes(sessionDir) {
 function formatRecall(results, containerTag) {
   const lines = results.map((r) => {
     const text = resultText(r).replace(/\s+/g, ' ').slice(0, MAX_RESULT_CHARS);
-    return `- ◪ ${text}${typeof r.filepath === 'string' && r.filepath ? ` (${r.filepath})` : ''}`;
+    const label = typeof r.title === 'string' && r.title.trim() ? `${r.title.trim()}: ` : '';
+    return `- ◪ ${label}${text}${typeof r.filepath === 'string' && r.filepath ? ` (${r.filepath})` : ''}`;
   });
   return `<supermemory-recall>
 ◪ Recalled from supermemory for this prompt (relevance-ranked):
