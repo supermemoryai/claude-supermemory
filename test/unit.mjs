@@ -181,7 +181,7 @@ describe('recall-directive hook', () => {
             results: [
               { memory: 'Chose Drizzle over Prisma', similarity: 0.82 },
               { chunk: 'export const db = drizzle(client)', filepath: 'src/db.ts', similarity: 0.74 },
-              { memory: 'Errors must be loud and obvious', similarity: 0.71 },
+              { memory: 'Errors must be loud and obvious', title: 'Error handling', similarity: 0.71 },
               { memory: 'irrelevant low-similarity hit', similarity: 0.2 },
             ],
           },
@@ -201,7 +201,7 @@ describe('recall-directive hook', () => {
     assert.match(context, /<supermemory-recall>/);
     assert.match(context, /- ◪ Chose Drizzle over Prisma/);
     assert.match(context, /- ◪ export const db = drizzle\(client\) \(src\/db\.ts\)/);
-    assert.match(context, /- ◪ Errors must be loud and obvious/);
+    assert.match(context, /- ◪ Error handling: Errors must be loud and obvious/);
     assert.doesNotMatch(context, /irrelevant low-similarity hit/);
     assert.match(context, /repo_example_project__/);
     assert.equal(plain(output.systemMessage), '◪ supermemory · recalled 3 memories');
