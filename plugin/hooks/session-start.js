@@ -31,6 +31,16 @@ const STATUSLINE_TIP_FILE = path.join(
   '.supermemory-claude',
   'statusline-tip-shown',
 );
+const STATUSLINE_INSTALLED_FILE = path.join(
+  os.homedir(),
+  '.supermemory-claude',
+  'statusline-installed',
+);
+const STATUSLINE_ENTRY = {
+  type: 'command',
+  command: 'node ~/.supermemory-claude/statusline-current',
+  refreshInterval: 1,
+};
 
 // The statusline setting needs one path that survives plugin updates; a
 // symlink re-pointed each session is that path — no code is ever copied.
@@ -46,20 +56,41 @@ function refreshStatuslineLink() {
   } catch {}
 }
 
-function statuslineTip() {
+// Installs the statusline into ~/.claude/settings.json on first run. The
+// sentinel file records that we installed once, so a user who deletes the
+// entry is never fought; a foreign statusLine is never overwritten.
+function installStatusline() {
+  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
   try {
-    if (fs.existsSync(STATUSLINE_TIP_FILE)) return null;
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    let settings = {};
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        return `${MARK} statusline not installed — ~/.claude/settings.json is unreadable: ${err.message}`;
+      }
+    }
     if (
       JSON.stringify(settings.statusLine || '').includes('statusline-current')
     ) {
       return null;
     }
-    fs.writeFileSync(STATUSLINE_TIP_FILE, new Date().toISOString());
-    return `${MARK} Supermemory status line available — add to ~/.claude/settings.json: "statusLine": {"type": "command", "command": "node ~/.supermemory-claude/statusline-current", "refreshInterval": 1} (refreshInterval keeps it animating while idle).`;
-  } catch {
-    return null;
+    if (settings.statusLine) {
+      if (fs.existsSync(STATUSLINE_TIP_FILE)) return null;
+      fs.mkdirSync(path.dirname(STATUSLINE_TIP_FILE), { recursive: true });
+      fs.writeFileSync(STATUSLINE_TIP_FILE, new Date().toISOString());
+      return `${MARK} Supermemory status line available — you already have a "statusLine" in ~/.claude/settings.json; replace it with ${JSON.stringify(STATUSLINE_ENTRY)} to switch.`;
+    }
+    if (fs.existsSync(STATUSLINE_INSTALLED_FILE)) return null;
+    settings.statusLine = STATUSLINE_ENTRY;
+    const tmp = `${settingsPath}.supermemory-tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`);
+    fs.renameSync(tmp, settingsPath);
+    fs.mkdirSync(path.dirname(STATUSLINE_INSTALLED_FILE), { recursive: true });
+    fs.writeFileSync(STATUSLINE_INSTALLED_FILE, new Date().toISOString());
+    return `${MARK} statusline installed — it appears the next time Claude Code starts (delete "statusLine" from ~/.claude/settings.json to turn it off).`;
+  } catch (err) {
+    return `${MARK} statusline install failed: ${err.message}`;
   }
 }
 
@@ -212,7 +243,7 @@ Memories will be saved as you work.
           .filter(Boolean)
           .join(gray(' · ')) || null,
         markTip(),
-        statuslineTip(),
+        installStatusline(),
       ],
     );
   } catch (err) {
