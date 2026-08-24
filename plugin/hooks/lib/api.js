@@ -47,6 +47,27 @@ async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS)
   return response.json();
 }
 
+async function getSession(baseUrl, apiKey, options = {}) {
+  const fetcher = options.fetch || fetch;
+  const response = await fetcher(`${baseUrl.replace(/\/+$/, '')}/v3/session`, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'x-sm-source': 'claude-code',
+    },
+    signal: AbortSignal.timeout(options.timeoutMs ?? REQUEST_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw Object.assign(
+      new Error(`Supermemory API ${response.status}: ${text.slice(0, 200)}`),
+      { status: response.status },
+    );
+  }
+
+  return response.json();
+}
+
 function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
   return post(baseUrl, apiKey, '/v4/profile', { containerTag, q: query }, options.timeoutMs);
 }
@@ -62,4 +83,4 @@ function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {
   return post(baseUrl, apiKey, '/v3/documents', body, options.timeoutMs);
 }
 
-module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory };
+module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory, getSession };

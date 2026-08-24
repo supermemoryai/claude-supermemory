@@ -1,4 +1,5 @@
 const { execFile } = require('node:child_process');
+const { randomBytes } = require('node:crypto');
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -18,7 +19,6 @@ const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
 
 const AUTH_BASE_URL =
   process.env.SUPERMEMORY_AUTH_URL || 'https://app.supermemory.ai/auth/connect';
-const AUTH_PORT = 19876;
 const AUTH_TIMEOUT = 25000;
 
 function execFileAsync(command, args) {
@@ -74,7 +74,20 @@ function saveCredentials(apiKey) {
     apiKey,
     savedAt: new Date().toISOString(),
   };
-  fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify(data, null, 2));
+  const temporaryFile = `${CREDENTIALS_FILE}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temporaryFile, JSON.stringify(data, null, 2), {
+      mode: 0o600,
+    });
+    fs.renameSync(temporaryFile, CREDENTIALS_FILE);
+    try {
+      fs.chmodSync(CREDENTIALS_FILE, 0o600);
+    } catch {}
+  } finally {
+    try {
+      if (fs.existsSync(temporaryFile)) fs.unlinkSync(temporaryFile);
+    } catch {}
+  }
 }
 
 function clearCredentials() {
@@ -85,24 +98,61 @@ function clearCredentials() {
   } catch {}
 }
 
-function startAuthFlow() {
-  return new Promise((resolve, reject) => {
-    let resolved = false;
+function createBrowserAuthUrl(callbackUrl, mode) {
+  const authUrl = new URL(AUTH_BASE_URL);
+  authUrl.searchParams.set('callback', callbackUrl.toString());
+  authUrl.searchParams.set('client', 'claude_code');
+  if (mode === 'switch_organization') {
+    authUrl.searchParams.set('mode', mode);
+  }
+  return authUrl;
+}
 
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://localhost:${AUTH_PORT}`);
+function startAuthFlow(options = {}) {
+  return new Promise((resolve, reject) => {
+    const persist = options.persist !== false;
+    const opener = options.openUrl || openUrl;
+    const createServer = options.createServer || http.createServer;
+    const timeoutMs = options.timeoutMs ?? AUTH_TIMEOUT;
+    const expectedState = randomBytes(32).toString('hex');
+    let settled = false;
+    let timeout;
+
+    const finish = (error, apiKey) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      try {
+        server.close();
+      } catch {}
+      if (error) reject(error);
+      else resolve(apiKey);
+    };
+
+    const server = createServer((req, res) => {
+      const url = new URL(req.url, 'http://127.0.0.1');
 
       if (url.pathname === '/callback') {
+        if (url.searchParams.get('state') !== expectedState) {
+          res.writeHead(400, { 'Content-Type': 'text/html' });
+          res.end(authErrorHtml);
+          return;
+        }
+
         const apiKey =
           url.searchParams.get('apikey') || url.searchParams.get('api_key');
 
         if (apiKey?.startsWith('sm_')) {
-          saveCredentials(apiKey);
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(authSuccessHtml);
-          resolved = true;
-          server.close();
-          resolve(apiKey);
+          try {
+            if (persist) saveCredentials(apiKey);
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(authSuccessHtml);
+            finish(null, apiKey);
+          } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'text/html' });
+            res.end(authErrorHtml);
+            finish(new Error(`Failed to save credentials: ${error.message}`));
+          }
         } else {
           res.writeHead(400, { 'Content-Type': 'text/html' });
           res.end(authErrorHtml);
@@ -113,29 +163,31 @@ function startAuthFlow() {
       }
     });
 
-    server.listen(AUTH_PORT, '127.0.0.1', () => {
-      const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_BASE_URL}?callback=${encodeURIComponent(callbackUrl)}&client=claude_code`;
-      openUrl(authUrl).catch((error) => {
-        if (!resolved) {
-          server.close();
-          reject(new Error(`Failed to open browser: ${error.message}`));
-        }
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        finish(new Error('Failed to determine auth callback port'));
+        return;
+      }
+
+      const callbackUrl = new URL(
+        `/callback?state=${expectedState}`,
+        `http://127.0.0.1:${address.port}`,
+      );
+      const authUrl = createBrowserAuthUrl(callbackUrl, options.mode);
+
+      Promise.resolve(opener(authUrl)).catch((error) => {
+        finish(new Error(`Failed to open browser: ${error.message}`));
       });
     });
 
     server.on('error', (err) => {
-      if (!resolved) {
-        reject(new Error(`Failed to start auth server: ${err.message}`));
-      }
+      finish(new Error(`Failed to start auth server: ${err.message}`));
     });
 
-    setTimeout(() => {
-      if (!resolved) {
-        server.close();
-        reject(new Error('AUTH_TIMEOUT'));
-      }
-    }, AUTH_TIMEOUT);
+    timeout = setTimeout(() => {
+      finish(new Error('AUTH_TIMEOUT'));
+    }, timeoutMs);
   });
 }
 
@@ -145,6 +197,7 @@ module.exports = {
   loadCredentials,
   saveCredentials,
   clearCredentials,
+  createBrowserAuthUrl,
   startAuthFlow,
   openUrl,
 };

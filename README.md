@@ -33,7 +33,9 @@ Your agent remembers what you worked on - across sessions, across projects.
 > /plugin uninstall claude-supermemory@supermemory-plugins
 > ```
 
-Set your API key (get one at [app.supermemory.ai](https://app.supermemory.ai)):
+Start a Claude Code session after installation. Supermemory opens a browser
+window where you can sign in and choose the organization this plugin should
+use. You can alternatively provide a key explicitly:
 
 ```bash
 export SUPERMEMORY_CC_API_KEY="sm_..."
@@ -73,13 +75,27 @@ write destination. Older personal/user overrides remain in the legacy read set.
 | `/supermemory:logout`         | Clear saved credentials                  |
 | `/supermemory:session`        | Show clickable URL for the current session document in Supermemory |
 | `/supermemory:status`         | Show authentication status |
+| `/supermemory:switch-org`     | Choose and connect a different organization |
+
+### Switching organizations
+
+Run `/supermemory:switch-org`, choose an organization in the browser, and
+approve the connection. The plugin verifies the new key and organization before
+replacing the saved credential, so cancelling or failing the flow keeps the
+previous credential. After a successful switch, run `/reload-plugins` or
+restart Claude Code because the running MCP proxy retains the key it loaded at
+startup.
+
+`SUPERMEMORY_CC_API_KEY` and a project-level `apiKey` take precedence over the
+saved browser credential. The switch command warns when either override is
+present.
 
 ## Configuration
 
 **Environment**
 
 ```bash
-SUPERMEMORY_CC_API_KEY=sm_...    # Required
+SUPERMEMORY_CC_API_KEY=sm_...    # Optional: overrides browser credentials
 SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
 ```
 
