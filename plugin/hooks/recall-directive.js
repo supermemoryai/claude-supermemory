@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { getProfile } = require('./lib/api');
+const { searchMemory } = require('./lib/api');
 const { BRAND, gray, red } = require('./lib/colors');
 const { getContainerTag } = require('./lib/container-tag');
 const { getUserFriendlyError } = require('./lib/error-helpers');
@@ -123,15 +123,17 @@ async function main() {
     }
 
     const containerTag = getContainerTag(cwd);
-    const response = await getProfile(
+    // Use /v3/search directly — /v4/profile's embedded searchResults is empty
+    // on self-hosted backends even when search finds hits (issue #106).
+    const response = await searchMemory(
       getBaseUrl(cwd, projectConfig),
       apiKey,
       containerTag,
       prompt.slice(0, MAX_QUERY_LENGTH),
-      { timeoutMs: SEARCH_TIMEOUT_MS },
+      { timeoutMs: SEARCH_TIMEOUT_MS, limit: MAX_RESULTS },
     );
 
-    const results = (response?.searchResults?.results || [])
+    const results = (response?.results || [])
       .filter((r) => resultText(r))
       .filter((r) => !Number.isFinite(r.similarity) || r.similarity >= MIN_SIMILARITY)
       .slice(0, MAX_RESULTS);
