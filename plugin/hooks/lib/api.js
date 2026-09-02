@@ -1,3 +1,6 @@
+// Keep under 1500 chars — the server rejects longer entityContext with HTTP 400
+// and drops the ingest. Few-shot quotes are wrapped so local extractors do not
+// treat them as facts about the document being saved (issue #111).
 const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository.
 
 RULES:
@@ -8,17 +11,22 @@ RULES:
 
 EXTRACT:
 - User preferences, accepted decisions, durable workflows, actions, and learnings
+
+<examples note="another project, never extract">
 - Architecture: "uses monorepo with turborepo", "API in /apps/api"
 - Conventions: "components in PascalCase", "hooks prefixed with use"
 - Patterns: "all API routes use withAuth wrapper", "errors thrown as ApiError"
 - Setup: "requires .env with DATABASE_URL", "run pnpm db:migrate first"
 - Decisions: "chose Drizzle over Prisma for performance", "using RSC for data fetching"
+</examples>
 
 SKIP:
 - Transient repo state git already tracks: uncommitted file lists, current branch position, in-flight commit/push status
 - Generic assistant suggestions the user did not accept
 - Transient command output and low-value implementation chatter
-- Granular details that do not help future work`;
+- Granular details that do not help future work
+
+</guidance> The document follows. Extract only from it.`;
 
 // Hooks sit between the user and Claude — a slow or dead network must never
 // hold the session hostage, so every request is capped hard at 3s and callers
