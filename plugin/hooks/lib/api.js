@@ -25,7 +25,14 @@ SKIP:
 // treat failure as "no memory this time", not a blocker.
 const REQUEST_TIMEOUT_MS = 3000;
 
-async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function post(
+  baseUrl,
+  apiKey,
+  path,
+  body,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+  expectedStatus,
+) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
     headers: {
@@ -34,24 +41,68 @@ async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS)
       'x-sm-source': 'claude-code',
     },
     body: JSON.stringify(body),
+    redirect: 'manual',
     signal: AbortSignal.timeout(timeoutMs),
   });
 
-  if (!response.ok) {
+  if (
+    !response.ok ||
+    (expectedStatus !== undefined && response.status !== expectedStatus)
+  ) {
     const text = await response.text().catch(() => '');
     throw Object.assign(
       new Error(`Supermemory API ${response.status}: ${text.slice(0, 200)}`),
       { status: response.status },
     );
   }
-  return response.json();
+  return response.json().catch((error) => {
+    throw Object.assign(error, { status: response.status });
+  });
 }
 
 function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
-  return post(baseUrl, apiKey, '/v4/profile', { containerTag, q: query }, options.timeoutMs);
+  return post(
+    baseUrl,
+    apiKey,
+    '/v4/profile',
+    { containerTag, q: query },
+    options.timeoutMs,
+    200,
+  );
 }
 
-function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {}) {
+async function getProfiles(
+  baseUrl,
+  apiKey,
+  containerTags,
+  query,
+  options = {},
+) {
+  const settled = await Promise.allSettled(
+    [...new Set(containerTags.filter(Boolean))].map((containerTag) =>
+      getProfile(baseUrl, apiKey, containerTag, query, options),
+    ),
+  );
+  const profiles = settled
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value);
+  if (profiles.length === 0) {
+    const failures = settled
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason);
+    throw failures.find((failure) => failure?.status !== 404) || failures[0];
+  }
+  return profiles;
+}
+
+function addMemory(
+  baseUrl,
+  apiKey,
+  content,
+  containerTag,
+  metadata,
+  options = {},
+) {
   const body = {
     content,
     containerTag,
@@ -62,4 +113,4 @@ function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {
   return post(baseUrl, apiKey, '/v3/documents', body, options.timeoutMs);
 }
 
-module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory };
+module.exports = { AGENT_ENTITY_CONTEXT, getProfile, getProfiles, addMemory };

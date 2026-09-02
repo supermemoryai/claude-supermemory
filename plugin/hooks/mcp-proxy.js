@@ -105,7 +105,11 @@ async function main() {
       try {
         await forward(message, apiKey);
       } catch (err) {
-        sendError(message.id, -32000, `Supermemory MCP proxy error: ${err.message}`);
+        sendError(
+          message.id,
+          -32000,
+          `Supermemory MCP proxy error: ${err.message}`,
+        );
       }
     });
   });

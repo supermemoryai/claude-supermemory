@@ -31,7 +31,10 @@ async function readStdin(timeoutMs = STDIN_TIMEOUT_MS) {
         finish(resolve, JSON.parse(value));
       } catch (err) {
         if (final) {
-          finish(reject, new Error(`Failed to parse stdin JSON: ${err.message}`));
+          finish(
+            reject,
+            new Error(`Failed to parse stdin JSON: ${err.message}`),
+          );
         }
       }
     };

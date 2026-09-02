@@ -2,9 +2,16 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { getProfile } = require('./lib/api');
+const { getProfiles } = require('./lib/api');
 const { BRAND, gray, red } = require('./lib/colors');
 const { getContainerTag } = require('./lib/container-tag');
+const {
+  formatRecallContext,
+  getRecallContainerTags,
+  mergeProfileResults,
+  normalizeText,
+  resultText,
+} = require('./lib/context');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
@@ -12,7 +19,6 @@ const {
   getApiKey,
   getBaseUrl,
   debugLog,
-  getRecallConfig,
 } = require('./lib/settings');
 const {
   atomicWriteJson,
@@ -28,25 +34,12 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 // to spend a tool call. A configured recallDirective restores advisory mode.
 const MIN_PROMPT_LENGTH = 12;
 const MAX_QUERY_LENGTH = 500;
-const MAX_RESULTS = 5;
-const MAX_RESULT_CHARS = 300;
-const MIN_SIMILARITY = 0.55;
 const SEARCH_TIMEOUT_MS = 3000;
 const MAX_SEEN_HASHES = 500;
 
 function shouldSkip(prompt) {
   if (prompt.length < MIN_PROMPT_LENGTH) return true;
   return ['/', '!', '#'].includes(prompt[0]);
-}
-
-// Search hits are memory-shaped (.memory) or document/chunk-shaped
-// (.chunk/.content/.text, usually with a filepath) — read whichever carries
-// the text.
-function resultText(r) {
-  const text = [r?.memory, r?.chunk, r?.content, r?.text].find(
-    (v) => typeof v === 'string' && v.trim(),
-  );
-  return text || null;
 }
 
 // A memory injected once this session stays in the conversation, so
@@ -56,7 +49,7 @@ function resultText(r) {
 function hashText(text) {
   return crypto
     .createHash('sha256')
-    .update(text.replace(/\s+/g, ' ').trim())
+    .update(normalizeText(text))
     .digest('hex')
     .slice(0, 16);
 }
@@ -66,27 +59,10 @@ function readSeenHashes(sessionDir) {
     const list = JSON.parse(
       fs.readFileSync(path.join(sessionDir, 'recalled.json'), 'utf8'),
     );
-    return Array.isArray(list)
-      ? list.filter((h) => typeof h === 'string')
-      : [];
+    return Array.isArray(list) ? list.filter((h) => typeof h === 'string') : [];
   } catch {
     return [];
   }
-}
-
-function formatRecall(results, containerTag) {
-  const lines = results.map((r) => {
-    const text = resultText(r).replace(/\s+/g, ' ').slice(0, MAX_RESULT_CHARS);
-    const title = typeof r.title === 'string' && r.title.trim() ? r.title.trim() : null;
-    const prefix = title && !text.startsWith(title) ? `${title} — ` : '';
-    return `- ◪ ${prefix}${text}${typeof r.filepath === 'string' && r.filepath ? ` (${r.filepath})` : ''}`;
-  });
-  return `<supermemory-recall>
-◪ Recalled from supermemory for this prompt (relevance-ranked):
-${lines.join('\n')}
-
-When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool (containerTag: "${containerTag}") or launch the context-gatherer agent.
-</supermemory-recall>`;
 }
 
 async function main() {
@@ -96,7 +72,9 @@ async function main() {
     const input = await readStdin();
     const cwd = input.cwd || process.cwd();
     const prompt = (input.prompt || '').trim();
-    const { directive } = getRecallConfig(cwd);
+    const projectConfig = loadProjectConfig(cwd);
+    const directive =
+      projectConfig?.recallDirective || settings.recallDirective || null;
 
     if (directive) {
       writeOutput({
@@ -113,7 +91,6 @@ async function main() {
       return;
     }
 
-    const projectConfig = loadProjectConfig(cwd);
     let apiKey;
     try {
       apiKey = getApiKey(cwd, projectConfig);
@@ -123,41 +100,49 @@ async function main() {
     }
 
     const containerTag = getContainerTag(cwd);
-    const response = await getProfile(
-      getBaseUrl(cwd, projectConfig),
+    const containerTags = getRecallContainerTags(containerTag, settings);
+    const responses = await getProfiles(
+      getBaseUrl(cwd, projectConfig, apiKey),
       apiKey,
-      containerTag,
+      containerTags,
       prompt.slice(0, MAX_QUERY_LENGTH),
       { timeoutMs: SEARCH_TIMEOUT_MS },
     );
-
-    const results = (response?.searchResults?.results || [])
-      .filter((r) => resultText(r))
-      .filter((r) => !Number.isFinite(r.similarity) || r.similarity >= MIN_SIMILARITY)
-      .slice(0, MAX_RESULTS);
+    const results = mergeProfileResults(responses, settings.maxMemories)
+      .searchResults.results;
 
     const sessionDir = getSessionDir(input.session_id);
     const seen = sessionDir ? readSeenHashes(sessionDir) : [];
     const seenSet = new Set(seen);
-    const fresh = results.filter((r) => !seenSet.has(hashText(resultText(r))));
+    const fresh = results.filter(
+      (result) => !seenSet.has(hashText(resultText(result))),
+    );
     const repeats = results.length - fresh.length;
+    const { text: context, newFacts } = formatRecallContext(fresh, {
+      containerTag,
+      maxTokens: settings.maxPromptRecallTokens,
+      customContainers: settings.autoRecallContainers
+        ? settings.customContainers
+        : [],
+    });
 
     if (input.session_id) {
       const prev = readState(input.session_id).search || {};
       writeState(input.session_id, 'search', {
-        results: fresh.length,
+        results: newFacts.length,
         count: (prev.count || 0) + 1,
-        memories: (prev.memories || 0) + fresh.length,
+        memories: (prev.memories || 0) + newFacts.length,
       });
     }
 
     debugLog(settings, 'Prompt recall', {
       query: prompt.slice(0, 80),
+      containerTags,
       hits: results.length,
-      fresh: fresh.length,
+      fresh: newFacts.length,
     });
 
-    if (fresh.length === 0) {
+    if (!context) {
       writeOutput({ continue: true, suppressOutput: true });
       return;
     }
@@ -166,19 +151,20 @@ async function main() {
       try {
         atomicWriteJson(
           path.join(sessionDir, 'recalled.json'),
-          [...seen, ...fresh.map((r) => hashText(resultText(r)))].slice(-MAX_SEEN_HASHES),
+          [...new Set([...seen, ...newFacts.map(hashText)])].slice(
+            -MAX_SEEN_HASHES,
+          ),
         );
       } catch {
         // Dedup is best effort; recall itself must still go through.
       }
     }
 
-    const context = formatRecall(fresh, containerTag);
     // ~4 chars/token: close enough to show what the injection costs.
     const tok = gray(`(${Math.round(context.length / 4)} tok)`);
     const label = repeats
-      ? `recalled ${fresh.length} new ${tok}${gray(` · ${repeats} already in context`)}`
-      : `recalled ${fresh.length} ${fresh.length === 1 ? 'memory' : 'memories'} ${tok}`;
+      ? `recalled ${newFacts.length} new ${tok}${gray(` · ${repeats} already in context`)}`
+      : `recalled ${newFacts.length} ${newFacts.length === 1 ? 'memory' : 'memories'} ${tok}`;
     writeOutput({
       systemMessage: `${BRAND} ${gray('·')} ${label}`,
       hookSpecificOutput: {
