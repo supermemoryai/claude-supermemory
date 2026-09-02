@@ -348,12 +348,8 @@ describe('recall settings and merging', () => {
 
 describe('recall-directive hook', () => {
   test('searches with the prompt and injects the top matches', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     const stub = await startStubServer(t, (_record, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(
@@ -716,12 +712,8 @@ describe('recall-directive hook', () => {
   });
 
   test('skips trivial prompts and slash commands without an API call', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     const stub = await startStubServer(t, (_record, res) => res.end('{}'));
     for (const prompt of ['hi', '/supermemory:status', '!ls', undefined]) {
       const { stdout } = await runHook(
@@ -735,12 +727,8 @@ describe('recall-directive hook', () => {
   });
 
   test('dedupes across the session: repeats go silent, mixes are labeled', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     let hits = [
       { memory: 'Chose Drizzle over Prisma', similarity: 0.82 },
       { memory: 'Errors must be loud and obvious', similarity: 0.71 },

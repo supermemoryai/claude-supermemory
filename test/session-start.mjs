@@ -16,12 +16,8 @@ const { readState } = require('../plugin/hooks/lib/statusline-state.js');
 
 describe('session-start hook', () => {
   test('injects profile memories and announces the count', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     const stub = await startStubServer(t, (_record, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(

@@ -58,12 +58,8 @@ describe('capture hook', () => {
   });
 
   test('saves the transcript delta with scope metadata and entity context', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     const transcript = join(makeTempDir(t, 'transcript'), 'session.jsonl');
     writeFileSync(
       transcript,
@@ -117,12 +113,8 @@ describe('capture hook', () => {
   });
 
   test('a failed save does not advance the cursor; the retry recaptures (issue #96)', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     const transcript = join(
       makeTempDir(t, 'transcript-retry'),
       'session.jsonl',
