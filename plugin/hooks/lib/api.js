@@ -41,6 +41,7 @@ async function post(
       'x-sm-source': 'claude-code',
     },
     body: JSON.stringify(body),
+    redirect: 'manual',
     signal: AbortSignal.timeout(timeoutMs),
   });
 

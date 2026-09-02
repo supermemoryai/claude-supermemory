@@ -14,12 +14,19 @@ async function runStatus(t, httpStatus) {
   const { repo } = makeRepo(t);
   const apiKey = 'sm_status_secret_0123456789';
   const home = makeAuthedHome(t, apiKey);
-  const stub = await startStubServer(t, (_record, res) => {
-    res.statusCode = httpStatus;
+  const stub = await startStubServer(t, (record, res) => {
+    if (httpStatus === 302 && record.url === '/v4/profile') {
+      res.statusCode = 302;
+      res.setHeader('Location', '/redirect-target');
+      res.end();
+      return;
+    }
+    const responseStatus = httpStatus === 302 ? 200 : httpStatus;
+    res.statusCode = responseStatus;
     res.setHeader('Content-Type', 'application/json');
     res.end(
       JSON.stringify(
-        httpStatus === 200
+        responseStatus === 200
           ? { profile: { static: [], dynamic: [] } }
           : { error: 'probe failed' },
       ),
@@ -76,17 +83,24 @@ describe('status check', () => {
     for (const [httpStatus, authenticated] of [
       [201, null],
       [204, null],
+      [302, null],
       [401, false],
       [403, false],
       [429, null],
       [503, null],
     ]) {
-      const { apiKey, output, result } = await runStatus(t, httpStatus);
+      const { apiKey, output, result, stub } = await runStatus(t, httpStatus);
       assert.equal(result.code, 0, result.stderr);
       assert.doesNotMatch(result.stdout, new RegExp(apiKey));
       assert.doesNotMatch(result.stderr, new RegExp(apiKey));
       assert.equal(output.authenticated, authenticated);
       assert.equal(output.httpStatus, httpStatus);
+      if (httpStatus === 302) {
+        assert.deepEqual(
+          stub.requests.map((request) => request.url),
+          ['/v4/profile'],
+        );
+      }
     }
   });
 });
