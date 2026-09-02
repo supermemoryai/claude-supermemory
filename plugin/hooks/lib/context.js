@@ -131,9 +131,12 @@ function formatBoundedItems(items, maxTokens, limitName, render) {
     const fixedBody = `${body}${item.before}`;
     const available = maxChars - render(fixedBody).length;
     if (available > 1) {
-      const emitted = `${(item.truncateText || item.text).slice(0, available - 1)}…`;
+      const truncated = (item.truncateText || item.text).slice(0, available - 1);
+      const emitted = `${truncated}…`;
       body = `${fixedBody}${emitted}`;
-      if (item.fact) newFacts.push(item.fact);
+      if (item.fact && truncated.length > (item.factOffset || 0)) {
+        newFacts.push(item.fact);
+      }
     }
     break;
   }
@@ -152,11 +155,13 @@ When one of these shapes your answer, credit it naturally with the ◪ prefix (e
     const memory = singleLine(result.memory);
     const title = singleLine(result.title);
     const filepath = singleLine(result.filepath);
+    const factPrefix = '- ◪ ';
     return {
       before: index === 0 ? '' : '\n',
       fact: memory,
       text: `- ◪ ${title && !memory.startsWith(title) ? `${title} — ` : ''}${memory}${filepath ? ` (${filepath})` : ''}`,
-      truncateText: `- ◪ ${memory}`,
+      truncateText: `${factPrefix}${memory}`,
+      factOffset: factPrefix.length,
     };
   });
   items.push({
@@ -201,11 +206,15 @@ Recalled memory for this project. Every line marked ◪ comes from supermemory �
 
 ${body}
 </supermemory-context>`;
-  const items = facts.map((fact, index) => ({
-    before: index === 0 ? '[Memory Profile]\n' : '\n',
-    fact,
-    text: `${index + 1}. ◪ ${fact}`,
-  }));
+  const items = facts.map((fact, index) => {
+    const factPrefix = `${index + 1}. ◪ `;
+    return {
+      before: index === 0 ? '[Memory Profile]\n' : '\n',
+      fact,
+      text: `${factPrefix}${fact}`,
+      factOffset: factPrefix.length,
+    };
+  });
   items.push(
     {
       before: '\n\n',

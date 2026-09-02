@@ -63,11 +63,13 @@ const DEFAULT_SETTINGS = {
 
 function readSettings(file) {
   try {
-    return fs.existsSync(file)
-      ? JSON.parse(fs.readFileSync(file, 'utf-8'))
+    if (!fs.existsSync(file)) return {};
+    const value = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value
       : {};
-  } catch (err) {
-    console.error(`Settings: Failed to load ${file}: ${err.message}`);
+  } catch {
+    console.error(`Settings: Failed to load ${file}`);
     return {};
   }
 }
@@ -83,14 +85,18 @@ function loadSettings() {
   Object.assign(settings, readSettings(SETTINGS_FILE));
   settings.autoRecallContainers = settings.autoRecallContainers === true;
   settings.customContainers = Array.isArray(settings.customContainers)
-    ? settings.customContainers.filter(
-        (container) =>
-          container &&
-          typeof container.tag === 'string' &&
-          container.tag.trim() &&
-          typeof container.description === 'string' &&
-          container.description.trim(),
-      )
+    ? settings.customContainers
+        .filter(
+          (container) =>
+            container &&
+            typeof container.tag === 'string' &&
+            container.tag.trim() &&
+            typeof container.description === 'string',
+        )
+        .map((container) => ({
+          tag: container.tag.trim(),
+          description: container.description.trim(),
+        }))
     : [];
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
   return settings;
@@ -127,7 +133,7 @@ function getBaseUrl(cwd, projectConfig, apiKey) {
   const sharedCredentials = readSettings(SHARED_CREDENTIALS_FILE);
   const sharedBaseUrl =
     apiKey && sharedCredentials.apiKey === apiKey
-      ? sharedCredentials.apiBaseUrl
+      ? normalizeBaseUrl(sharedCredentials.apiBaseUrl)
       : null;
   const configured =
     process.env.SUPERMEMORY_API_URL ||
@@ -196,7 +202,6 @@ function getSignalConfig(cwd) {
 module.exports = {
   SETTINGS_DIR,
   SETTINGS_FILE,
-  SHARED_SETTINGS_FILE,
   DEFAULT_SETTINGS,
   loadSettings,
   getApiKey,
