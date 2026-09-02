@@ -10,7 +10,7 @@ import {
   startStubServer,
 } from './helpers.mjs';
 
-async function runStatus(t, httpStatus) {
+async function runStatus(t, httpStatus, responseBody) {
   const { repo } = makeRepo(t);
   const apiKey = 'sm_status_secret_0123456789';
   const home = makeAuthedHome(t, apiKey);
@@ -25,11 +25,12 @@ async function runStatus(t, httpStatus) {
     res.statusCode = responseStatus;
     res.setHeader('Content-Type', 'application/json');
     res.end(
-      JSON.stringify(
-        responseStatus === 200
-          ? { profile: { static: [], dynamic: [] } }
-          : { error: 'probe failed' },
-      ),
+      responseBody ??
+        JSON.stringify(
+          responseStatus === 200
+            ? { profile: { static: [], dynamic: [] } }
+            : { error: 'probe failed' },
+        ),
     );
   });
   const sharedDir = join(home, '.codex', 'supermemory');
@@ -102,5 +103,19 @@ describe('status check', () => {
         );
       }
     }
+  });
+
+  test('preserves a direct 200 when the response body is malformed', async (t) => {
+    const { apiKey, output, result, stub } = await runStatus(t, 200, '{');
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, new RegExp(apiKey));
+    assert.doesNotMatch(result.stderr, new RegExp(apiKey));
+    assert.equal(output.authenticated, true);
+    assert.equal(output.httpStatus, 200);
+    assert.deepEqual(
+      stub.requests.map((request) => request.url),
+      ['/v4/profile'],
+    );
   });
 });

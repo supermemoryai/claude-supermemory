@@ -55,7 +55,9 @@ async function post(
       { status: response.status },
     );
   }
-  return response.json();
+  return response.json().catch((error) => {
+    throw Object.assign(error, { status: response.status });
+  });
 }
 
 function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
