@@ -78,7 +78,7 @@ function loadSettings() {
   const shared = readSettings(SHARED_SETTINGS_FILE);
   const settings = { ...DEFAULT_SETTINGS };
   for (const key of SHARED_RECALL_KEYS) {
-    if (Object.hasOwn(shared, key)) {
+    if (Object.hasOwn(shared, key) && shared[key] != null) {
       settings[key] = shared[key];
     }
   }

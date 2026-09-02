@@ -136,6 +136,21 @@ describe('recall settings and merging', () => {
       assert.equal(result.loaded.baseUrl, 'https://api.supermemory.ai');
     }
 
+    writeFileSync(
+      join(home, '.codex', 'supermemory.json'),
+      JSON.stringify({
+        maxMemories: null,
+        maxProfileItems: null,
+        maxRecallTokens: null,
+        maxPromptRecallTokens: null,
+      }),
+    );
+    const loaded = readSettings(home).settings;
+    assert.equal(loaded.maxMemories, 5);
+    assert.equal(loaded.maxProfileItems, 5);
+    assert.equal(loaded.maxRecallTokens, 2500);
+    assert.equal(loaded.maxPromptRecallTokens, 500);
+
     const sentinel = 'sm_SECRET_MUST_NOT_REACH_STDERR';
     writeFileSync(join(sharedDir, 'credentials.json'), sentinel);
     const result = runSettings(home);
