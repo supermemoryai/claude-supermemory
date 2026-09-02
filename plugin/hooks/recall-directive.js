@@ -9,6 +9,7 @@ const {
   formatRecallContext,
   getRecallContainerTags,
   mergeProfileResults,
+  normalizeText,
   resultText,
 } = require('./lib/context');
 const { getUserFriendlyError } = require('./lib/error-helpers');
@@ -18,7 +19,6 @@ const {
   getApiKey,
   getBaseUrl,
   debugLog,
-  getRecallConfig,
 } = require('./lib/settings');
 const {
   atomicWriteJson,
@@ -49,7 +49,7 @@ function shouldSkip(prompt) {
 function hashText(text) {
   return crypto
     .createHash('sha256')
-    .update(text.replace(/\s+/g, ' ').trim())
+    .update(normalizeText(text))
     .digest('hex')
     .slice(0, 16);
 }
@@ -74,13 +74,15 @@ async function main() {
     const input = await readStdin();
     const cwd = input.cwd || process.cwd();
     const prompt = (input.prompt || '').trim();
-    const recallConfig = getRecallConfig(cwd);
+    const projectConfig = loadProjectConfig(cwd);
+    const directive =
+      projectConfig?.recallDirective || settings.recallDirective || null;
 
-    if (recallConfig.directive) {
+    if (directive) {
       writeOutput({
         hookSpecificOutput: {
           hookEventName: 'UserPromptSubmit',
-          additionalContext: recallConfig.directive,
+          additionalContext: directive,
         },
       });
       return;
@@ -91,7 +93,6 @@ async function main() {
       return;
     }
 
-    const projectConfig = loadProjectConfig(cwd);
     let apiKey;
     try {
       apiKey = getApiKey(cwd, projectConfig);
@@ -101,9 +102,9 @@ async function main() {
     }
 
     const containerTag = getContainerTag(cwd);
-    const containerTags = getRecallContainerTags(containerTag, recallConfig);
+    const containerTags = getRecallContainerTags(containerTag, settings);
     const responses = await getProfiles(
-      getBaseUrl(cwd, projectConfig),
+      getBaseUrl(cwd, projectConfig, apiKey),
       apiKey,
       containerTags,
       prompt.slice(0, MAX_QUERY_LENGTH),
@@ -111,7 +112,7 @@ async function main() {
     );
     const results = mergeProfileResults(
       responses,
-      recallConfig.maxMemories,
+      settings.maxMemories,
     ).searchResults.results;
 
     const sessionDir = getSessionDir(input.session_id);
@@ -121,10 +122,9 @@ async function main() {
     const repeats = results.length - fresh.length;
     const { text: context, newFacts } = formatRecallContext(fresh, {
       containerTag,
-      maxMemories: recallConfig.maxMemories,
-      maxTokens: recallConfig.maxPromptRecallTokens,
-      customContainers: recallConfig.autoRecallContainers
-        ? recallConfig.customContainers
+      maxTokens: settings.maxPromptRecallTokens,
+      customContainers: settings.autoRecallContainers
+        ? settings.customContainers
         : [],
     });
 

@@ -31,7 +31,13 @@ const {
   getStatusLabel,
   renderStatusline,
 } = require('../plugin/statusline.js');
-const { formatRecallContext } = require('../plugin/hooks/lib/context.js');
+const {
+  formatRecallContext,
+  formatSessionContext,
+  getRecallContainerTags,
+  mergeProfileResults,
+} = require('../plugin/hooks/lib/context.js');
+const { getProfiles } = require('../plugin/hooks/lib/api.js');
 
 const HOOKS_DIR = join(process.cwd(), 'plugin', 'hooks');
 
@@ -140,6 +146,148 @@ function makeAuthedHome(t, apiKey = 'sm_test_key_0123456789abcdef') {
   return home;
 }
 
+function readSettings(home, apiKey = 'sm_shared') {
+  const modulePath = join(HOOKS_DIR, 'lib', 'settings.js');
+  const script = `
+    const settings = require(${JSON.stringify(modulePath)});
+    console.log(JSON.stringify({
+      settings: settings.loadSettings(),
+      signal: settings.getSignalConfig(process.cwd()),
+      includeTools: settings.getIncludeTools(process.cwd()),
+      baseUrl: settings.getBaseUrl(process.cwd(), null, ${JSON.stringify(apiKey)}),
+    }));
+  `;
+  const result = spawnSync('node', ['-e', script], {
+    encoding: 'utf-8',
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+describe('recall settings and merging', () => {
+  test('shares only recall settings and applies Claude overrides', (t) => {
+    const home = makeTempDir(t, 'settings');
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.codex', 'supermemory.json'),
+      JSON.stringify({
+        maxMemories: 15,
+        maxProfileItems: 15,
+        maxRecallTokens: 5000,
+        maxPromptRecallTokens: 2000,
+        autoRecallContainers: true,
+        customContainers: [{ tag: 'coding_personal', description: 'Personal.' }],
+        debug: true,
+        includeTools: ['Bash'],
+        recallDirective: 'Codex-only directive',
+        signalExtraction: true,
+      }),
+    );
+    mkdirSync(join(home, '.codex', 'supermemory'), { recursive: true });
+    writeFileSync(
+      join(home, '.codex', 'supermemory', 'credentials.json'),
+      JSON.stringify({
+        apiKey: 'sm_shared',
+        apiBaseUrl: 'http://127.0.0.1:6767',
+      }),
+    );
+    writeFileSync(
+      join(home, '.supermemory-claude', 'settings.json'),
+      JSON.stringify({ maxMemories: 2 }),
+    );
+
+    const loaded = readSettings(home);
+    assert.equal(loaded.settings.maxMemories, 2);
+    assert.equal(loaded.settings.maxProfileItems, 15);
+    assert.equal(loaded.settings.maxRecallTokens, 5000);
+    assert.equal(loaded.settings.maxPromptRecallTokens, 2000);
+    assert.equal(loaded.settings.autoRecallContainers, true);
+    assert.equal(loaded.settings.debug, false);
+    assert.equal(loaded.settings.recallDirective, null);
+    assert.equal(loaded.signal.enabled, false);
+    assert.deepEqual(loaded.includeTools, []);
+    assert.equal(loaded.baseUrl, 'http://127.0.0.1:6767');
+    assert.equal(readSettings(home, 'sm_other').baseUrl, 'https://api.supermemory.ai');
+  });
+
+  test('requires a literal boolean to search custom containers', () => {
+    const customContainers = [{ tag: 'coding_personal', description: 'Personal.' }];
+    assert.deepEqual(
+      getRecallContainerTags('repo_test', {
+        autoRecallContainers: 'false',
+        customContainers,
+      }),
+      ['repo_test'],
+    );
+    assert.deepEqual(
+      getRecallContainerTags('repo_test', {
+        autoRecallContainers: true,
+        customContainers,
+      }),
+      ['repo_test', 'coding_personal'],
+    );
+  });
+
+  test('dedupes whitespace-equivalent results before the global cap', () => {
+    const merged = mergeProfileResults(
+      [
+        { searchResults: { results: [{ memory: 'Use the shared\nsettings loader', similarity: 0.9 }] } },
+        { searchResults: { results: [{ memory: 'Use the shared settings loader', similarity: 0.8 }] } },
+      ],
+      15,
+    );
+    assert.equal(merged.searchResults.results.length, 1);
+  });
+
+  test('caps static and dynamic profile facts independently', () => {
+    const merged = mergeProfileResults(
+      [{ profile: { static: ['s1', 's2', 's3'], dynamic: ['d1', 'd2', 'd3'] } }],
+      15,
+    );
+    const { newFacts } = formatSessionContext(merged, {
+      maxProfileItems: 2,
+      maxTokens: 1000,
+      containerTag: 'repo_test',
+      projectName: 'Test',
+    });
+    assert.deepEqual(newFacts, ['s1', 's2', 'd1', 'd2']);
+  });
+
+  test('keeps SessionStart wrappers complete at the whole-context budget', () => {
+    const { text, newFacts } = formatSessionContext(
+      { profile: { static: ['x'.repeat(4000)], dynamic: [] } },
+      {
+        maxProfileItems: 15,
+        maxTokens: 120,
+        containerTag: 'repo_test',
+        projectName: 'Test',
+      },
+    );
+    assert.ok(text.length <= 480);
+    assert.match(text, /…/);
+    assert.match(text, /<\/supermemory-context>$/);
+    assert.equal(newFacts.length, 1);
+  });
+
+  test('surfaces a non-404 failure when every container request fails', async (t) => {
+    const stub = await startStubServer(t, (record, res) => {
+      const { containerTag } = JSON.parse(record.body);
+      res.statusCode = containerTag === 'missing' ? 404 : 503;
+      res.end(containerTag);
+    });
+    await assert.rejects(
+      getProfiles(stub.url, 'sm_test', ['missing', 'unavailable']),
+      (error) => error.status === 503,
+    );
+    await assert.rejects(
+      getProfiles(stub.url, 'sm_test', ['missing']),
+      (error) => error.status === 404,
+    );
+  });
+});
+
 describe('container tags', () => {
   test('derives one canonical repo tag from the git remote', (t) => {
     const { repo, home } = makeRepo(t);
@@ -223,19 +371,13 @@ describe('recall-directive hook', () => {
   });
 
   test('mirrors shared Codex limits and globally ranks automatic containers', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     mkdirSync(join(home, '.codex'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
     writeFileSync(
       join(home, '.codex', 'supermemory.json'),
       JSON.stringify({
         maxMemories: 15,
-        maxProfileItems: 15,
-        maxRecallTokens: 5000,
         maxPromptRecallTokens: 2000,
         autoRecallContainers: true,
         customContainers: [
@@ -304,18 +446,99 @@ describe('recall-directive hook', () => {
 
   test('preserves complete recall wrappers at the token budget', () => {
     const { text, newFacts } = formatRecallContext(
-      [{ memory: 'x'.repeat(4000) }],
+      [{
+        memory: 'short memory',
+        title: 't'.repeat(4000),
+        filepath: 'p'.repeat(4000),
+      }],
       {
         containerTag: 'repo_test',
-        maxMemories: 15,
         maxTokens: 200,
-        customContainers: [],
+        customContainers: [
+          { tag: 'coding_personal', description: 'd'.repeat(4000) },
+        ],
       },
     );
     assert.ok(text.length <= 800);
+    assert.match(text, /short memory/);
     assert.match(text, /…/);
     assert.match(text, /<\/supermemory-recall>$/);
     assert.equal(newFacts.length, 1);
+  });
+
+  test('budgets the automatic-container catalog as variable context', () => {
+    const { text, newFacts } = formatRecallContext(
+      [{ memory: 'short memory' }],
+      {
+        containerTag: 'repo_test',
+        maxTokens: 200,
+        customContainers: [
+          { tag: 'coding_personal', description: 'd'.repeat(4000) },
+        ],
+      },
+    );
+    assert.ok(text.length <= 800);
+    assert.match(text, /short memory/);
+    assert.match(text, /Configured automatic recall containers:/);
+    assert.match(text, /…/);
+    assert.match(text, /<\/supermemory-recall>$/);
+    assert.equal(newFacts.length, 1);
+  });
+
+  test('keeps the compatibility prompt budget when settings are absent', async (t) => {
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        searchResults: {
+          results: Array.from({ length: 5 }, (_, index) => ({
+            memory: `${index}:${'x'.repeat(4000)}`,
+            similarity: 0.9 - index / 100,
+          })),
+        },
+      }));
+    });
+
+    const { stdout } = await runHook(
+      'recall-directive.js',
+      { session_id: 's-default-budget', cwd: repo, prompt: 'recall the previous implementation' },
+      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
+    );
+    const context = JSON.parse(stdout).hookSpecificOutput.additionalContext;
+    assert.ok(context.length <= 2000);
+    assert.match(context, /<\/supermemory-recall>$/);
+  });
+
+  test('marks only memories emitted within the prompt budget as seen', async (t) => {
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
+    writeFileSync(
+      join(home, '.supermemory-claude', 'settings.json'),
+      JSON.stringify({ maxMemories: 3, maxPromptRecallTokens: 150 }),
+    );
+    const hits = ['A', 'B', 'C'].map((prefix, index) => ({
+      memory: `${prefix}:${prefix.repeat(1000)}`,
+      similarity: 0.9 - index / 100,
+    }));
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ searchResults: { results: hits } }));
+    });
+    const input = {
+      session_id: 's-emitted-only',
+      cwd: repo,
+      prompt: 'recall the long ordered memories',
+    };
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+
+    const first = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
+    assert.match(first.hookSpecificOutput.additionalContext, /A:AAA/);
+    assert.doesNotMatch(first.hookSpecificOutput.additionalContext, /B:BBB/);
+
+    const second = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
+    assert.match(second.hookSpecificOutput.additionalContext, /B:BBB/);
+    assert.doesNotMatch(second.hookSpecificOutput.additionalContext, /A:AAA/);
   });
 
   test('skips trivial prompts and slash commands without an API call', async (t) => {
@@ -498,20 +721,14 @@ describe('session-start hook', () => {
   });
 
   test('loads profile facts from shared automatic containers', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
     mkdirSync(join(home, '.codex'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
     writeFileSync(
       join(home, '.codex', 'supermemory.json'),
       JSON.stringify({
-        maxMemories: 15,
         maxProfileItems: 15,
         maxRecallTokens: 5000,
-        maxPromptRecallTokens: 2000,
         autoRecallContainers: true,
         customContainers: [
           { tag: 'coding_personal', description: 'Personal coding decisions.' },

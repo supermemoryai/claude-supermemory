@@ -61,7 +61,10 @@ async function getProfiles(baseUrl, apiKey, containerTags, query, options = {}) 
     .filter((result) => result.status === 'fulfilled')
     .map((result) => result.value);
   if (profiles.length === 0) {
-    throw settled.find((result) => result.status === 'rejected')?.reason;
+    const failures = settled
+      .filter((result) => result.status === 'rejected')
+      .map((result) => result.reason);
+    throw failures.find((failure) => failure?.status !== 404) || failures[0];
   }
   return profiles;
 }

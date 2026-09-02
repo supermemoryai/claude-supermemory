@@ -56,7 +56,7 @@ async function main() {
       return;
     }
 
-    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const baseUrl = getBaseUrl(cwd, projectConfig, apiKey);
     const containerTag = getContainerTag(cwd);
 
     const captured = readState(sessionId).capture?.count || 0;

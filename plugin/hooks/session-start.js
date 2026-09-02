@@ -14,7 +14,6 @@ const {
   getApiKey,
   getBaseUrl,
   debugLog,
-  getRecallConfig,
 } = require('./lib/settings');
 const { BRAND, MARK, bold, gray } = require('./lib/colors');
 const { readStdin, writeOutput } = require('./lib/stdin');
@@ -158,8 +157,7 @@ async function main() {
     const projectConfig = loadProjectConfig(cwd);
     const projectName = getProjectName(cwd);
     const containerTag = getContainerTag(cwd);
-    const recallConfig = getRecallConfig(cwd);
-    const containerTags = getRecallContainerTags(containerTag, recallConfig);
+    const containerTags = getRecallContainerTags(containerTag, settings);
 
     debugLog(settings, 'SessionStart', {
       cwd,
@@ -188,7 +186,7 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
       }
     }
 
-    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const baseUrl = getBaseUrl(cwd, projectConfig, apiKey);
 
     let profileResult = null;
     let apiError = null;
@@ -199,7 +197,7 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
         containerTags,
         undefined,
       );
-      profileResult = mergeProfileResults(responses, recallConfig.maxMemories);
+      profileResult = mergeProfileResults(responses, settings.maxMemories);
     } catch (err) {
       // Fail open, but never silently: a network failure must not be dressed
       // up as "this project has no memories". Only 404 means genuinely empty.
@@ -210,8 +208,8 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
     const { text: context, newFacts } = formatSessionContext(
       profileResult,
       {
-        maxProfileItems: recallConfig.maxProfileItems,
-        maxTokens: recallConfig.maxRecallTokens,
+        maxProfileItems: settings.maxProfileItems,
+        maxTokens: settings.maxRecallTokens,
         containerTag,
         projectName,
       },

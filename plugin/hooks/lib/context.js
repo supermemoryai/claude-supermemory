@@ -39,16 +39,14 @@ function provenance(result) {
   };
 }
 
-function normalize(value) {
-  return String(value || '')
-    .toLowerCase()
-    .trim();
+function normalizeText(value) {
+  return singleLine(value).toLowerCase();
 }
 
 function dedupe(items, keyFor) {
   const seen = new Set();
   return items.filter((item) => {
-    const key = normalize(keyFor(item));
+    const key = normalizeText(keyFor(item));
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -66,11 +64,11 @@ function mergeProfileResults(responses, maxMemories) {
     responses.flatMap((response) => response?.profile?.static || []),
     (fact) => fact,
   );
-  const staticKeys = new Set(staticFacts.map(normalize));
+  const staticKeys = new Set(staticFacts.map(normalizeText));
   const dynamicFacts = dedupe(
     responses.flatMap((response) => response?.profile?.dynamic || []),
     (fact) => fact,
-  ).filter((fact) => !staticKeys.has(normalize(fact)));
+  ).filter((fact) => !staticKeys.has(normalizeText(fact)));
 
   const searchResults = dedupe(
     responses
@@ -104,7 +102,7 @@ function getRecallContainerTags(containerTag, config) {
   return [
     ...new Set([
       containerTag,
-      ...(config.autoRecallContainers
+      ...(config.autoRecallContainers === true
         ? config.customContainers.map((container) => container.tag.trim())
         : []),
     ]),
@@ -123,19 +121,19 @@ function formatBoundedItems(items, maxTokens, limitName, render) {
   let body = '';
   const newFacts = [];
   for (const item of items) {
-    const fullBody = `${body}${item.before}${item.prefix}${item.text}${item.suffix}`;
+    const fullBody = `${body}${item.before}${item.text}`;
     if (render(fullBody).length <= maxChars) {
       body = fullBody;
-      newFacts.push(item.text);
+      if (item.fact) newFacts.push(item.fact);
       continue;
     }
 
-    const fixedBody = `${body}${item.before}${item.prefix}${item.suffix}`;
+    const fixedBody = `${body}${item.before}`;
     const available = maxChars - render(fixedBody).length;
     if (available > 1) {
-      const emitted = `${item.text.slice(0, available - 1)}…`;
-      body = `${body}${item.before}${item.prefix}${emitted}${item.suffix}`;
-      newFacts.push(emitted);
+      const emitted = `${(item.truncateText || item.text).slice(0, available - 1)}…`;
+      body = `${fixedBody}${emitted}`;
+      if (item.fact) newFacts.push(item.fact);
     }
     break;
   }
@@ -144,31 +142,42 @@ function formatBoundedItems(items, maxTokens, limitName, render) {
 
 function formatRecallContext(results, options) {
   const customContainers = options.customContainers || [];
-  const catalog = customContainers.length
-    ? `\n\nConfigured automatic recall containers:\n${customContainers
-        .map(
-          (container) =>
-            `- ${singleLine(container.tag)}: ${singleLine(container.description)}`,
-        )
-        .join('\n')}`
-    : '';
   const render = (body) => `<supermemory-recall>
 ◪ Recalled from supermemory for this prompt (relevance-ranked):
-${body}${catalog}
+${body}
 
-When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool (containerTag: "${options.containerTag}") or launch the context-gatherer agent.
+When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool or launch the context-gatherer agent.
 </supermemory-recall>`;
-  const items = results.slice(0, Math.max(0, options.maxMemories)).map((result, index) => {
+  const items = results.map((result, index) => {
     const memory = singleLine(result.memory);
     const title = singleLine(result.title);
     const filepath = singleLine(result.filepath);
     return {
       before: index === 0 ? '' : '\n',
-      prefix: `- ◪ ${title && !memory.startsWith(title) ? `${title} — ` : ''}`,
-      text: memory,
-      suffix: filepath ? ` (${filepath})` : '',
+      fact: memory,
+      text: `- ◪ ${title && !memory.startsWith(title) ? `${title} — ` : ''}${memory}${filepath ? ` (${filepath})` : ''}`,
+      truncateText: `- ◪ ${memory}`,
     };
   });
+  items.push({
+    before: '\n\n',
+    fact: null,
+    text: `Recall container: ${singleLine(options.containerTag)}`,
+  });
+  if (customContainers.length) {
+    items.push({
+      before: '\n',
+      fact: null,
+      text: 'Configured automatic recall containers:',
+    });
+    items.push(
+      ...customContainers.map((container) => ({
+        before: '\n',
+        fact: null,
+        text: `- ${singleLine(container.tag)}: ${singleLine(container.description)}`,
+      })),
+    );
+  }
   return formatBoundedItems(
     items,
     options.maxTokens,
@@ -179,8 +188,8 @@ When one of these shapes your answer, credit it naturally with the ◪ prefix (e
 
 function formatSessionContext(result, options) {
   const take = (facts) =>
-    dedupe(facts, (fact) => fact)
-      .map((fact) => String(fact).trim())
+    facts
+      .map((fact) => singleLine(fact))
       .filter(Boolean)
       .slice(0, Math.max(0, options.maxProfileItems));
   const facts = [
@@ -188,17 +197,27 @@ function formatSessionContext(result, options) {
     ...take(result?.profile?.dynamic || []),
   ];
   const render = (body) => `<supermemory-context>
-Recalled memory for this project (${options.projectName}). Every line marked ◪ comes from supermemory — when citing one, keep the mark and phrase it naturally. If you name the source, say "from supermemory" — never "from memory".
-This project's memory container: ${options.containerTag}
+Recalled memory for this project. Every line marked ◪ comes from supermemory — when citing one, keep the mark and phrase it naturally. If you name the source, say "from supermemory" — never "from memory".
 
 ${body}
 </supermemory-context>`;
   const items = facts.map((fact, index) => ({
     before: index === 0 ? '[Memory Profile]\n' : '\n',
-    prefix: `${index + 1}. ◪ `,
-    text: fact,
-    suffix: '',
+    fact,
+    text: `${index + 1}. ◪ ${fact}`,
   }));
+  items.push(
+    {
+      before: '\n\n',
+      fact: null,
+      text: `Project: ${singleLine(options.projectName)}`,
+    },
+    {
+      before: '\n',
+      fact: null,
+      text: `Memory container: ${singleLine(options.containerTag)}`,
+    },
+  );
   return formatBoundedItems(items, options.maxTokens, 'maxRecallTokens', render);
 }
 
@@ -207,5 +226,6 @@ module.exports = {
   formatSessionContext,
   getRecallContainerTags,
   mergeProfileResults,
+  normalizeText,
   resultText,
 };

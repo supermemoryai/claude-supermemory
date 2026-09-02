@@ -12,13 +12,27 @@ const SHARED_SETTINGS_FILE = path.join(
   '.codex',
   'supermemory.json',
 );
+const SHARED_CREDENTIALS_FILE = path.join(
+  os.homedir(),
+  '.codex',
+  'supermemory',
+  'credentials.json',
+);
+const SHARED_RECALL_KEYS = [
+  'maxMemories',
+  'maxProfileItems',
+  'maxRecallTokens',
+  'maxPromptRecallTokens',
+  'autoRecallContainers',
+  'customContainers',
+];
 
 const DEFAULT_SETTINGS = {
   includeTools: [],
   maxMemories: 5,
   maxProfileItems: 5,
   maxRecallTokens: 2500,
-  maxPromptRecallTokens: null,
+  maxPromptRecallTokens: 500,
   autoRecallContainers: false,
   customContainers: [],
   debug: false,
@@ -47,18 +61,27 @@ const DEFAULT_SETTINGS = {
   signalTurnsBefore: 3,
 };
 
+function readSettings(file) {
+  try {
+    return fs.existsSync(file)
+      ? JSON.parse(fs.readFileSync(file, 'utf-8'))
+      : {};
+  } catch (err) {
+    console.error(`Settings: Failed to load ${file}: ${err.message}`);
+    return {};
+  }
+}
+
 function loadSettings() {
+  const shared = readSettings(SHARED_SETTINGS_FILE);
   const settings = { ...DEFAULT_SETTINGS };
-  for (const file of [SHARED_SETTINGS_FILE, SETTINGS_FILE]) {
-    try {
-      if (fs.existsSync(file)) {
-        Object.assign(settings, JSON.parse(fs.readFileSync(file, 'utf-8')));
-      }
-    } catch (err) {
-      console.error(`Settings: Failed to load ${file}: ${err.message}`);
+  for (const key of SHARED_RECALL_KEYS) {
+    if (Object.hasOwn(shared, key)) {
+      settings[key] = shared[key];
     }
   }
-  settings.maxPromptRecallTokens ??= settings.maxRecallTokens;
+  Object.assign(settings, readSettings(SETTINGS_FILE));
+  settings.autoRecallContainers = settings.autoRecallContainers === true;
   settings.customContainers = Array.isArray(settings.customContainers)
     ? settings.customContainers.filter(
         (container) =>
@@ -99,10 +122,18 @@ function normalizeBaseUrl(baseUrl) {
   }
 }
 
-function getBaseUrl(cwd, projectConfig) {
+function getBaseUrl(cwd, projectConfig, apiKey) {
   projectConfig = projectConfig || loadProjectConfig(cwd || process.cwd());
+  const sharedCredentials = readSettings(SHARED_CREDENTIALS_FILE);
+  const sharedBaseUrl =
+    apiKey && sharedCredentials.apiKey === apiKey
+      ? sharedCredentials.apiBaseUrl
+      : null;
   const configured =
-    process.env.SUPERMEMORY_API_URL || projectConfig?.baseUrl || BASE_URL;
+    process.env.SUPERMEMORY_API_URL ||
+    projectConfig?.baseUrl ||
+    sharedBaseUrl ||
+    BASE_URL;
   const normalized = normalizeBaseUrl(configured);
   if (!normalized) {
     throw new Error('Invalid baseUrl: expected an absolute http(s) URL');
@@ -162,20 +193,6 @@ function getSignalConfig(cwd) {
   return { enabled, keywords, turnsBefore };
 }
 
-function getRecallConfig(cwd) {
-  const settings = loadSettings();
-  const projectConfig = loadProjectConfig(cwd || process.cwd());
-  return {
-    directive: projectConfig?.recallDirective || settings.recallDirective || null,
-    maxMemories: settings.maxMemories,
-    maxProfileItems: settings.maxProfileItems,
-    maxRecallTokens: settings.maxRecallTokens,
-    maxPromptRecallTokens: settings.maxPromptRecallTokens,
-    autoRecallContainers: settings.autoRecallContainers,
-    customContainers: settings.customContainers,
-  };
-}
-
 module.exports = {
   SETTINGS_DIR,
   SETTINGS_FILE,
@@ -188,5 +205,4 @@ module.exports = {
   getIncludeTools,
   shouldIncludeTool,
   getSignalConfig,
-  getRecallConfig,
 };

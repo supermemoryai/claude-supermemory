@@ -85,8 +85,11 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
 
 **Global Settings** — `~/.supermemory-claude/settings.json`
 
-Claude first loads shared recall settings from `~/.codex/supermemory.json` when
-that file exists. Claude-specific settings override the shared values.
+Claude reads only the six recall options below from
+`~/.codex/supermemory.json` when that file exists. Claude-specific settings
+override those shared values; unrelated Codex options never alter Claude.
+When both clients use the same saved API key, Claude also uses Codex's saved
+API base URL. Environment and project-specific URL overrides still take priority.
 
 ```json
 {
@@ -110,7 +113,7 @@ that file exists. Claude-specific settings override the shared values.
 | `maxMemories`             | Maximum globally ranked prompt matches across all searched containers (default: 5) |
 | `maxProfileItems`         | Maximum static and dynamic profile items per section (default: 5) |
 | `maxRecallTokens`         | Approximate whole-context SessionStart budget (default: 2500) |
-| `maxPromptRecallTokens`   | Approximate whole-context prompt-recall budget; defaults to `maxRecallTokens` |
+| `maxPromptRecallTokens`   | Approximate whole-context prompt-recall budget (default: 500) |
 | `autoRecallContainers`    | Search every valid `customContainers` entry automatically (default: false) |
 | `customContainers`        | Additional recall containers with `tag` and `description` fields |
 | `recallDirective`         | Replace automatic prompt recall with a custom advisory instruction |
