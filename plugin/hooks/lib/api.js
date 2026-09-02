@@ -31,6 +31,7 @@ async function post(
   path,
   body,
   timeoutMs = REQUEST_TIMEOUT_MS,
+  expectedStatus,
 ) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
@@ -43,7 +44,10 @@ async function post(
     signal: AbortSignal.timeout(timeoutMs),
   });
 
-  if (!response.ok) {
+  if (
+    !response.ok ||
+    (expectedStatus !== undefined && response.status !== expectedStatus)
+  ) {
     const text = await response.text().catch(() => '');
     throw Object.assign(
       new Error(`Supermemory API ${response.status}: ${text.slice(0, 200)}`),
@@ -60,6 +64,7 @@ function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
     '/v4/profile',
     { containerTag, q: query },
     options.timeoutMs,
+    200,
   );
 }
 

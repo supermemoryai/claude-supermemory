@@ -74,6 +74,8 @@ describe('status check', () => {
 
   test('separates rejected credentials from indeterminate failures', async (t) => {
     for (const [httpStatus, authenticated] of [
+      [201, null],
+      [204, null],
       [401, false],
       [403, false],
       [429, null],
