@@ -108,7 +108,9 @@ function isFresh(record, ttl, now, contextUpdatedAt = 0) {
 // Transient states (saving, errors) briefly take over.
 function getStatus(state, now) {
   const { context, capture, search } = state;
-  const generation = Number.isFinite(context?.updatedAt) ? context.updatedAt : 0;
+  const generation = Number.isFinite(context?.updatedAt)
+    ? context.updatedAt
+    : 0;
 
   if (
     capture?.status === 'saving' &&
@@ -184,7 +186,8 @@ function renderStatusline(state, options = {}) {
   // Rotate real content, not just paint: the tally pane alternates with live
   // relative ages that tick upward, so the words themselves keep changing.
   const panes = [null];
-  if (status.savedAt) panes.push(`saved ${formatAge(now - status.savedAt)} ago`);
+  if (status.savedAt)
+    panes.push(`saved ${formatAge(now - status.savedAt)} ago`);
   if (status.recalledAt) {
     panes.push(`recalled ${formatAge(now - status.recalledAt)} ago`);
   }
@@ -193,7 +196,9 @@ function renderStatusline(state, options = {}) {
 
   const emphasized = Math.floor(tick / EMPHASIS_TICKS) % status.parts.length;
   const parts = status.parts.map((part, i) =>
-    i === emphasized ? `${WHITE}${BOLD}${part}${RESET}` : `${GRAY}${part}${RESET}`,
+    i === emphasized
+      ? `${WHITE}${BOLD}${part}${RESET}`
+      : `${GRAY}${part}${RESET}`,
   );
   return `${brand} ${WHITE}·${RESET} ${parts.join(`${GRAY} · ${RESET}`)}`;
 }

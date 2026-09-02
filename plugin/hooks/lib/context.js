@@ -8,24 +8,30 @@ function singleLine(value) {
 }
 
 function resultText(result) {
-  return [
-    result?.memory,
-    result?.chunk,
-    result?.content,
-    result?.text,
-    result?.context,
-  ].find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+  return (
+    [
+      result?.memory,
+      result?.chunk,
+      result?.content,
+      result?.text,
+      result?.context,
+    ]
+      .find((value) => typeof value === 'string' && value.trim())
+      ?.trim() || ''
+  );
 }
 
 function stringValue(...values) {
-  return values.find(
-    (value) => typeof value === 'string' && value.trim().length > 0,
-  )?.trim();
+  return values
+    .find((value) => typeof value === 'string' && value.trim().length > 0)
+    ?.trim();
 }
 
 function provenance(result) {
   const metadata =
-    result?.metadata && typeof result.metadata === 'object' ? result.metadata : {};
+    result?.metadata && typeof result.metadata === 'object'
+      ? result.metadata
+      : {};
   return {
     title: stringValue(result?.title, metadata.title),
     filepath: stringValue(
@@ -56,7 +62,7 @@ function dedupe(items, keyFor) {
 function score(result) {
   if (Number.isFinite(result.similarity)) return result.similarity;
   if (Number.isFinite(result.score)) return result.score;
-  return -1;
+  return null;
 }
 
 function mergeProfileResults(responses, maxMemories) {
@@ -76,10 +82,10 @@ function mergeProfileResults(responses, maxMemories) {
       .filter((result) => resultText(result))
       .filter((result) => {
         const relevance = score(result);
-        return relevance < 0 || relevance >= RECALL_MIN_SIMILARITY;
+        return relevance === null || relevance >= RECALL_MIN_SIMILARITY;
       })
       .sort((a, b) => {
-        const relevance = score(b) - score(a);
+        const relevance = (score(b) ?? -1) - (score(a) ?? -1);
         if (relevance !== 0) return relevance;
         return Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0);
       }),
@@ -131,11 +137,14 @@ function formatBoundedItems(items, maxTokens, limitName, render) {
     const fixedBody = `${body}${item.before}`;
     const available = maxChars - render(fixedBody).length;
     if (available > 1) {
-      const truncated = (item.truncateText || item.text).slice(0, available - 1);
+      const truncated = (item.truncateText || item.text).slice(
+        0,
+        available - 1,
+      );
       const emitted = `${truncated}…`;
       body = `${fixedBody}${emitted}`;
       if (item.fact && truncated.length > (item.factOffset || 0)) {
-        newFacts.push(item.fact);
+        newFacts.push(`${truncated.slice(item.factOffset || 0)}…`);
       }
     }
     break;
@@ -227,7 +236,12 @@ ${body}
       text: `Memory container: ${singleLine(options.containerTag)}`,
     },
   );
-  return formatBoundedItems(items, options.maxTokens, 'maxRecallTokens', render);
+  return formatBoundedItems(
+    items,
+    options.maxTokens,
+    'maxRecallTokens',
+    render,
+  );
 }
 
 module.exports = {

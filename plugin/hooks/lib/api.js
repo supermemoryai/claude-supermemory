@@ -25,7 +25,13 @@ SKIP:
 // Callers treat failure as "no memory this time", not a blocker.
 const REQUEST_TIMEOUT_MS = 3000;
 
-async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function post(
+  baseUrl,
+  apiKey,
+  path,
+  body,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
     headers: {
@@ -48,10 +54,22 @@ async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS)
 }
 
 function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
-  return post(baseUrl, apiKey, '/v4/profile', { containerTag, q: query }, options.timeoutMs);
+  return post(
+    baseUrl,
+    apiKey,
+    '/v4/profile',
+    { containerTag, q: query },
+    options.timeoutMs,
+  );
 }
 
-async function getProfiles(baseUrl, apiKey, containerTags, query, options = {}) {
+async function getProfiles(
+  baseUrl,
+  apiKey,
+  containerTags,
+  query,
+  options = {},
+) {
   const settled = await Promise.allSettled(
     [...new Set(containerTags.filter(Boolean))].map((containerTag) =>
       getProfile(baseUrl, apiKey, containerTag, query, options),
@@ -69,7 +87,14 @@ async function getProfiles(baseUrl, apiKey, containerTags, query, options = {}) 
   return profiles;
 }
 
-function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {}) {
+function addMemory(
+  baseUrl,
+  apiKey,
+  content,
+  containerTag,
+  metadata,
+  options = {},
+) {
   const body = {
     content,
     containerTag,

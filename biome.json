@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["src/**", "scripts/**", "!src/lib/validate.js"]
+    "includes": ["plugin/**", "test/**", "plugin-inspector.ts", "package.json"]
   },
   "formatter": {
     "enabled": true,

@@ -8,9 +8,9 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { basename, join } from 'node:path';
 import { describe, test } from 'node:test';
-import { createRequire } from 'node:module';
 import {
   HOOKS_DIR,
   hash16,
@@ -59,7 +59,10 @@ describe('container tags', () => {
   test('derives one canonical repo tag from the git remote', (t) => {
     const { repo, home } = makeRepo(t);
     const { tag, projectName } = readTags(repo, home);
-    assert.equal(tag, `repo_example_project__${hash16('github.com/acme/example.project')}`);
+    assert.equal(
+      tag,
+      `repo_example_project__${hash16('github.com/acme/example.project')}`,
+    );
     assert.equal(projectName, 'Example.Project');
   });
 
@@ -74,9 +77,16 @@ describe('container tags', () => {
 
   test('honors the project-config override', (t) => {
     const { repo, git, home } = makeRepo(t);
-    const configDir = join(git(['rev-parse', '--show-toplevel']), '.claude', '.supermemory-claude');
+    const configDir = join(
+      git(['rev-parse', '--show-toplevel']),
+      '.claude',
+      '.supermemory-claude',
+    );
     mkdirSync(configDir, { recursive: true });
-    writeFileSync(join(configDir, 'config.json'), JSON.stringify({ repoContainerTag: 'team_tag' }));
+    writeFileSync(
+      join(configDir, 'config.json'),
+      JSON.stringify({ repoContainerTag: 'team_tag' }),
+    );
     assert.equal(readTags(repo, home).tag, 'team_tag');
   });
 });
@@ -129,13 +139,20 @@ describe('recall-approve hook', () => {
       );
       const output = JSON.parse(stdout);
       assert.equal(output.hookSpecificOutput.permissionDecision, 'allow');
-      assert.equal(plain(output.systemMessage), '◪ supermemory · recalling: auth flow decisions');
+      assert.equal(
+        plain(output.systemMessage),
+        '◪ supermemory · recalling: auth flow decisions',
+      );
     }
   });
 
   test('lets write tools and unrelated tools fall through to normal permissions', async (t) => {
     const home = makeTempDir(t, 'approve-home2');
-    for (const toolName of ['mcp__supermemory__add_memory', 'Bash', 'mcp__other__search_memory']) {
+    for (const toolName of [
+      'mcp__supermemory__add_memory',
+      'Bash',
+      'mcp__other__search_memory',
+    ]) {
       const { stdout } = await runHook(
         'recall-approve.js',
         { session_id: 's1', tool_name: toolName, tool_input: {} },
@@ -149,7 +166,7 @@ describe('recall-approve hook', () => {
 });
 
 describe('mcp proxy', () => {
-  function runProxy(t, env, lines) {
+  function runProxy(_t, env, lines) {
     return new Promise((resolve, reject) => {
       const child = spawn('node', [join(HOOKS_DIR, 'mcp-proxy.js')], {
         env: { ...process.env, ...env },
@@ -161,7 +178,13 @@ describe('mcp proxy', () => {
       });
       child.on('error', reject);
       child.on('close', () =>
-        resolve(stdout.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))),
+        resolve(
+          stdout
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((l) => JSON.parse(l)),
+        ),
       );
       for (const line of lines) child.stdin.write(`${JSON.stringify(line)}\n`);
       child.stdin.end();
@@ -185,7 +208,10 @@ describe('mcp proxy', () => {
         { jsonrpc: '2.0', id: 2, method: 'tools/list' },
       ],
     );
-    assert.deepEqual(messages.map((m) => m.id), [1, 2]);
+    assert.deepEqual(
+      messages.map((m) => m.id),
+      [1, 2],
+    );
     assert.match(stub.requests[0].headers.authorization, /^Bearer sm_test/);
     assert.equal(stub.requests[0].headers['mcp-session-id'], undefined);
     assert.equal(stub.requests[1].headers['mcp-session-id'], 'mcp-sess-9');
@@ -196,7 +222,9 @@ describe('mcp proxy', () => {
     const stub = await startStubServer(t, (record, res) => {
       res.setHeader('Content-Type', 'text/event-stream');
       const { id } = JSON.parse(record.body);
-      res.end(`event: message\ndata: {"jsonrpc":"2.0","id":${id},"result":{"via":"sse"}}\n\n`);
+      res.end(
+        `event: message\ndata: {"jsonrpc":"2.0","id":${id},"result":{"via":"sse"}}\n\n`,
+      );
     });
 
     const messages = await runProxy(
@@ -204,7 +232,9 @@ describe('mcp proxy', () => {
       { HOME: home, USERPROFILE: home, SUPERMEMORY_MCP_URL: `${stub.url}/mcp` },
       [{ jsonrpc: '2.0', id: 7, method: 'tools/list' }],
     );
-    assert.deepEqual(messages, [{ jsonrpc: '2.0', id: 7, result: { via: 'sse' } }]);
+    assert.deepEqual(messages, [
+      { jsonrpc: '2.0', id: 7, result: { via: 'sse' } },
+    ]);
   });
 
   test('answers with a clear JSON-RPC error when unauthenticated', async (t) => {
@@ -228,11 +258,26 @@ describe('statusline state', () => {
   test('isolates sessions and writes private atomic event files', (t) => {
     const dataDir = makeTempDir(t, 'status-state');
     assert.equal(
-      writeState('../../session-a', 'context', { status: 'ready', memoryItemsLoaded: 4 }, { dataDir, now: 1000 }),
+      writeState(
+        '../../session-a',
+        'context',
+        { status: 'ready', memoryItemsLoaded: 4 },
+        { dataDir, now: 1000 },
+      ),
       true,
     );
-    writeState('session-a', 'search', { results: 2, query: 'must not be stored' }, { dataDir, now: 1100 });
-    writeState('session-b', 'context', { status: 'ready', memoryItemsLoaded: 9 }, { dataDir, now: 1200 });
+    writeState(
+      'session-a',
+      'search',
+      { results: 2, query: 'must not be stored' },
+      { dataDir, now: 1100 },
+    );
+    writeState(
+      'session-b',
+      'context',
+      { status: 'ready', memoryItemsLoaded: 9 },
+      { dataDir, now: 1200 },
+    );
 
     const first = readState('../../session-a', { dataDir });
     const second = readState('session-b', { dataDir });
@@ -245,9 +290,15 @@ describe('statusline state', () => {
     assert.match(basename(traversalDir), /^[a-f0-9]{64}$/);
     if (process.platform !== 'win32') {
       assert.equal(statSync(traversalDir).mode & 0o777, 0o700);
-      assert.equal(statSync(join(traversalDir, 'context.json')).mode & 0o777, 0o600);
+      assert.equal(
+        statSync(join(traversalDir, 'context.json')).mode & 0o777,
+        0o600,
+      );
     }
-    assert.equal(readdirSync(traversalDir).some((name) => name.endsWith('.tmp')), false);
+    assert.equal(
+      readdirSync(traversalDir).some((name) => name.endsWith('.tmp')),
+      false,
+    );
   });
 
   test('ignores corrupt state without breaking the renderer', (t) => {
@@ -265,7 +316,12 @@ describe('statusline state', () => {
 
   test('prunes only stale hashed session directories', (t) => {
     const dataDir = makeTempDir(t, 'status-prune');
-    writeState('stale-session', 'context', { status: 'ready', memoryItemsLoaded: 1 }, { dataDir });
+    writeState(
+      'stale-session',
+      'context',
+      { status: 'ready', memoryItemsLoaded: 1 },
+      { dataDir },
+    );
     const sessionDir = getSessionDir('stale-session', dataDir);
     utimesSync(join(sessionDir, 'context.json'), new Date(0), new Date(0));
     utimesSync(sessionDir, new Date(0), new Date(0));
@@ -296,7 +352,10 @@ describe('statusline rendering', () => {
     assert.equal(getStatusLabel({ context }, now), '3 loaded');
     assert.equal(
       getStatusLabel(
-        { context, capture: { status: 'saved', count: 7, updatedAt: now + 10 } },
+        {
+          context,
+          capture: { status: 'saved', count: 7, updatedAt: now + 10 },
+        },
         now + 20,
       ),
       '3 loaded · 7 captured',
@@ -344,28 +403,40 @@ describe('statusline rendering', () => {
   test('transient states briefly take over the tally', () => {
     assert.equal(
       getStatusLabel(
-        { context, capture: { status: 'saving', count: 7, updatedAt: now + 15 } },
+        {
+          context,
+          capture: { status: 'saving', count: 7, updatedAt: now + 15 },
+        },
         now + 20,
       ),
       'saving session',
     );
     assert.equal(
       getStatusLabel(
-        { context, capture: { status: 'saving', count: 7, updatedAt: now + 15 } },
+        {
+          context,
+          capture: { status: 'saving', count: 7, updatedAt: now + 15 },
+        },
         now + 15 + SAVING_TTL_MS,
       ),
       '3 loaded · 7 captured',
     );
     assert.equal(
       getStatusLabel(
-        { context, capture: { status: 'error', count: 7, updatedAt: now + 15 } },
+        {
+          context,
+          capture: { status: 'error', count: 7, updatedAt: now + 15 },
+        },
         now + 20,
       ),
       'session sync failed',
     );
     assert.equal(
       getStatusLabel(
-        { context, capture: { status: 'error', count: 7, updatedAt: now + 15 } },
+        {
+          context,
+          capture: { status: 'error', count: 7, updatedAt: now + 15 },
+        },
         now + 15 + ERROR_TTL_MS,
       ),
       '3 loaded · 7 captured',
@@ -374,7 +445,10 @@ describe('statusline rendering', () => {
 
   test('animates: no frame repeats within any 10s window', () => {
     const states = {
-      saving: { context, capture: { status: 'saving', count: 2, updatedAt: now } },
+      saving: {
+        context,
+        capture: { status: 'saving', count: 2, updatedAt: now },
+      },
       tally: {
         context,
         capture: { status: 'saved', count: 7, updatedAt: now + 10 },
@@ -386,7 +460,11 @@ describe('statusline rendering', () => {
       const frames = Array.from({ length: 10 }, (_, i) =>
         renderStatusline(state, { now: now + 20 + i * TICK_MS }),
       );
-      assert.equal(new Set(frames).size, frames.length, `${name} frames repeat`);
+      assert.equal(
+        new Set(frames).size,
+        frames.length,
+        `${name} frames repeat`,
+      );
     }
   });
 
@@ -399,9 +477,18 @@ describe('statusline rendering', () => {
     const frames = Array.from({ length: 12 }, (_, i) =>
       plain(renderStatusline(state, { now: now + 60_000 + i * TICK_MS })),
     );
-    assert.ok(frames.some((f) => f.includes('7 captured')), 'tally pane missing');
-    assert.ok(frames.some((f) => /saved \d+[smh] ago/.test(f)), 'save age pane missing');
-    assert.ok(frames.some((f) => /recalled \d+[smh] ago/.test(f)), 'recall age pane missing');
+    assert.ok(
+      frames.some((f) => f.includes('7 captured')),
+      'tally pane missing',
+    );
+    assert.ok(
+      frames.some((f) => /saved \d+[smh] ago/.test(f)),
+      'save age pane missing',
+    );
+    assert.ok(
+      frames.some((f) => /recalled \d+[smh] ago/.test(f)),
+      'recall age pane missing',
+    );
   });
 
   test('suppresses counts from before the current session context', () => {
@@ -416,7 +503,10 @@ describe('statusline rendering', () => {
       ),
       '3 loaded',
     );
-    assert.equal(getStatusLabel({ context: { ...context, status: 'error' } }, now), null);
+    assert.equal(
+      getStatusLabel({ context: { ...context, status: 'error' } }, now),
+      null,
+    );
     assert.equal(
       getStatusLabel({ context: { ...context, memoryItemsLoaded: 0 } }, now),
       'ready',

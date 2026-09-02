@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
-import { createRequire } from 'node:module';
 import {
   HOOKS_DIR,
   hash16,
@@ -16,7 +16,10 @@ import {
 } from './helpers.mjs';
 
 const require = createRequire(import.meta.url);
-const { getSessionDir, readState } = require('../plugin/hooks/lib/statusline-state.js');
+const {
+  getSessionDir,
+  readState,
+} = require('../plugin/hooks/lib/statusline-state.js');
 const {
   formatRecallContext,
   formatSessionContext,
@@ -25,7 +28,10 @@ const {
 } = require('../plugin/hooks/lib/context.js');
 const { getProfiles } = require('../plugin/hooks/lib/api.js');
 
-function runSettings(home, { apiKey = 'sm_shared', projectConfig = null, apiUrl = '' } = {}) {
+function runSettings(
+  home,
+  { apiKey = 'sm_shared', projectConfig = null, apiUrl = '' } = {},
+) {
   const modulePath = join(HOOKS_DIR, 'lib', 'settings.js');
   const script = `
     const settings = require(${JSON.stringify(modulePath)});
@@ -74,7 +80,9 @@ describe('recall settings and merging', () => {
         maxRecallTokens: 5000,
         maxPromptRecallTokens: 2000,
         autoRecallContainers: true,
-        customContainers: [{ tag: 'coding_personal', description: 'Personal.' }],
+        customContainers: [
+          { tag: 'coding_personal', description: 'Personal.' },
+        ],
         debug: true,
         includeTools: ['Bash'],
         recallDirective: 'Codex-only directive',
@@ -105,7 +113,10 @@ describe('recall settings and merging', () => {
     assert.equal(loaded.signal.enabled, false);
     assert.deepEqual(loaded.includeTools, []);
     assert.equal(loaded.baseUrl, 'http://127.0.0.1:6767');
-    assert.equal(readSettings(home, 'sm_other').baseUrl, 'https://api.supermemory.ai');
+    assert.equal(
+      readSettings(home, 'sm_other').baseUrl,
+      'https://api.supermemory.ai',
+    );
   });
 
   test('tolerates non-object shared JSON and redacts malformed credentials', (t) => {
@@ -114,7 +125,10 @@ describe('recall settings and merging', () => {
     mkdirSync(sharedDir, { recursive: true });
 
     for (const value of [null, [], 'unrelated', 7]) {
-      writeFileSync(join(home, '.codex', 'supermemory.json'), JSON.stringify(value));
+      writeFileSync(
+        join(home, '.codex', 'supermemory.json'),
+        JSON.stringify(value),
+      );
       writeFileSync(join(sharedDir, 'credentials.json'), JSON.stringify(value));
       const result = runSettings(home);
       assert.equal(result.status, 0, result.stderr);
@@ -137,11 +151,15 @@ describe('recall settings and merging', () => {
     mkdirSync(sharedDir, { recursive: true });
     writeFileSync(
       join(sharedDir, 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_shared', apiBaseUrl: 'http://127.0.0.1:6767' }),
+      JSON.stringify({
+        apiKey: 'sm_shared',
+        apiBaseUrl: 'http://127.0.0.1:6767',
+      }),
     );
 
     assert.equal(
-      readSettings(home, 'sm_shared', { apiUrl: 'http://127.0.0.1:7001' }).baseUrl,
+      readSettings(home, 'sm_shared', { apiUrl: 'http://127.0.0.1:7001' })
+        .baseUrl,
       'http://127.0.0.1:7001',
     );
     assert.equal(
@@ -204,7 +222,9 @@ describe('recall settings and merging', () => {
   });
 
   test('requires a literal boolean to search custom containers', () => {
-    const customContainers = [{ tag: 'coding_personal', description: 'Personal.' }];
+    const customContainers = [
+      { tag: 'coding_personal', description: 'Personal.' },
+    ];
     assert.deepEqual(
       getRecallContainerTags('repo_test', {
         autoRecallContainers: 'false',
@@ -224,8 +244,28 @@ describe('recall settings and merging', () => {
   test('dedupes whitespace-equivalent results before the global cap', () => {
     const merged = mergeProfileResults(
       [
-        { searchResults: { results: [{ memory: 'Use the shared settings loader', similarity: 0.8, title: 'lower' }] } },
-        { searchResults: { results: [{ memory: 'Use the shared\nsettings loader', similarity: 0.9, title: 'higher' }] } },
+        {
+          searchResults: {
+            results: [
+              {
+                memory: 'Use the shared settings loader',
+                similarity: 0.8,
+                title: 'lower',
+              },
+            ],
+          },
+        },
+        {
+          searchResults: {
+            results: [
+              {
+                memory: 'Use the shared\nsettings loader',
+                similarity: 0.9,
+                title: 'higher',
+              },
+            ],
+          },
+        },
       ],
       15,
     );
@@ -234,9 +274,34 @@ describe('recall settings and merging', () => {
     assert.equal(merged.searchResults.results[0].title, 'higher');
   });
 
+  test('rejects finite negative relevance but keeps unscored results', () => {
+    const merged = mergeProfileResults(
+      [
+        {
+          searchResults: {
+            results: [
+              { memory: 'negative similarity', similarity: -0.5 },
+              { memory: 'negative score', score: -0.25 },
+              { memory: 'unscored result' },
+            ],
+          },
+        },
+      ],
+      15,
+    );
+    assert.deepEqual(
+      merged.searchResults.results.map((result) => result.memory),
+      ['unscored result'],
+    );
+  });
+
   test('caps static and dynamic profile facts independently', () => {
     const merged = mergeProfileResults(
-      [{ profile: { static: ['s1', 's2', 's3'], dynamic: ['d1', 'd2', 'd3'] } }],
+      [
+        {
+          profile: { static: ['s1', 's2', 's3'], dynamic: ['d1', 'd2', 'd3'] },
+        },
+      ],
       15,
     );
     const { newFacts } = formatSessionContext(merged, {
@@ -289,16 +354,24 @@ describe('recall-directive hook', () => {
       join(home, '.supermemory-claude', 'credentials.json'),
       JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
     );
-    const stub = await startStubServer(t, (record, res) => {
+    const stub = await startStubServer(t, (_record, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(
         JSON.stringify({
           searchResults: {
             results: [
               { memory: 'Chose Drizzle over Prisma', similarity: 0.82 },
-              { chunk: 'export const db = drizzle(client)', filepath: 'src/db.ts', similarity: 0.74 },
+              {
+                chunk: 'export const db = drizzle(client)',
+                filepath: 'src/db.ts',
+                similarity: 0.74,
+              },
               { memory: 'Errors must be loud and obvious', similarity: 0.71 },
-              { title: 'Migration plan', content: 'Use expand-contract migrations', similarity: 0.7 },
+              {
+                title: 'Migration plan',
+                content: 'Use expand-contract migrations',
+                similarity: 0.7,
+              },
               { memory: 'irrelevant low-similarity hit', similarity: 0.2 },
             ],
           },
@@ -308,7 +381,11 @@ describe('recall-directive hook', () => {
 
     const { code, stdout } = await runHook(
       'recall-directive.js',
-      { session_id: 's1', cwd: repo, prompt: 'continue the database work from before' },
+      {
+        session_id: 's1',
+        cwd: repo,
+        prompt: 'continue the database work from before',
+      },
       { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
     );
     assert.equal(code, 0);
@@ -317,12 +394,21 @@ describe('recall-directive hook', () => {
     assert.equal(output.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
     assert.match(context, /<supermemory-recall>/);
     assert.match(context, /- ◪ Chose Drizzle over Prisma/);
-    assert.match(context, /- ◪ export const db = drizzle\(client\) \(src\/db\.ts\)/);
+    assert.match(
+      context,
+      /- ◪ export const db = drizzle\(client\) \(src\/db\.ts\)/,
+    );
     assert.match(context, /- ◪ Errors must be loud and obvious/);
-    assert.match(context, /- ◪ Migration plan — Use expand-contract migrations/);
+    assert.match(
+      context,
+      /- ◪ Migration plan — Use expand-contract migrations/,
+    );
     assert.doesNotMatch(context, /irrelevant low-similarity hit/);
     assert.match(context, /repo_example_project__/);
-    assert.match(plain(output.systemMessage), /^◪ supermemory · recalled \d+ memories \(\d+ tok\)$/);
+    assert.match(
+      plain(output.systemMessage),
+      /^◪ supermemory · recalled \d+ memories \(\d+ tok\)$/,
+    );
     assert.equal(stub.requests[0].url, '/v4/profile');
     assert.equal(
       JSON.parse(stub.requests[0].body).q,
@@ -356,7 +442,10 @@ describe('recall-directive hook', () => {
     );
     const results = {
       coding_personal: Array.from({ length: 8 }, (_, index) => ({
-        memory: index === 0 ? 'Tomauskasz GitHub account preference' : `coding-${index}`,
+        memory:
+          index === 0
+            ? 'Tomauskasz GitHub account preference'
+            : `coding-${index}`,
         similarity: 0.99 - index / 100,
       })),
       copla_company: Array.from({ length: 8 }, (_, index) => ({
@@ -391,18 +480,24 @@ describe('recall-directive hook', () => {
       {
         session_id: 's-shared-config',
         cwd: repo,
-        prompt: 'recall personal GitHub preferences and Copla company workflows',
+        prompt:
+          'recall personal GitHub preferences and Copla company workflows',
       },
       { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
     );
     const context = JSON.parse(stdout).hookSpecificOutput.additionalContext;
-    const tags = stub.requests.map((request) => JSON.parse(request.body).containerTag);
-    assert.deepEqual(new Set(tags), new Set([
-      `repo_example_project__${hash16('github.com/acme/example.project')}`,
-      'coding_personal',
-      'copla_company',
-      'unavailable',
-    ]));
+    const tags = stub.requests.map(
+      (request) => JSON.parse(request.body).containerTag,
+    );
+    assert.deepEqual(
+      new Set(tags),
+      new Set([
+        `repo_example_project__${hash16('github.com/acme/example.project')}`,
+        'coding_personal',
+        'copla_company',
+        'unavailable',
+      ]),
+    );
     assert.equal((context.match(/^- ◪ /gm) || []).length, 15);
     assert.ok(context.indexOf('Tomauskasz') < context.indexOf('repo-0'));
     assert.match(context, /Copla company knowledge workflow/);
@@ -413,11 +508,13 @@ describe('recall-directive hook', () => {
 
   test('preserves complete recall wrappers at the token budget', () => {
     const { text, newFacts } = formatRecallContext(
-      [{
-        memory: 'short memory',
-        title: 't'.repeat(4000),
-        filepath: 'p'.repeat(4000),
-      }],
+      [
+        {
+          memory: 'short memory',
+          title: 't'.repeat(4000),
+          filepath: 'p'.repeat(4000),
+        },
+      ],
       {
         containerTag: 'repo_test',
         maxTokens: 200,
@@ -448,10 +545,10 @@ describe('recall-directive hook', () => {
     }
     assert.notEqual(minimumTokens, null);
 
-    const result = formatRecallContext(
-      [{ memory: 'must remain eligible' }],
-      { ...options, maxTokens: minimumTokens + 0.5 },
-    );
+    const result = formatRecallContext([{ memory: 'must remain eligible' }], {
+      ...options,
+      maxTokens: minimumTokens + 0.5,
+    });
     assert.equal(result.text, '');
     assert.deepEqual(result.newFacts, []);
   });
@@ -478,21 +575,27 @@ describe('recall-directive hook', () => {
   test('keeps the compatibility prompt budget when settings are absent', async (t) => {
     const { repo } = makeRepo(t);
     const home = makeAuthedHome(t);
-    const stub = await startStubServer(t, (record, res) => {
+    const stub = await startStubServer(t, (_record, res) => {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({
-        searchResults: {
-          results: Array.from({ length: 5 }, (_, index) => ({
-            memory: `${index}:${'x'.repeat(4000)}`,
-            similarity: 0.9 - index / 100,
-          })),
-        },
-      }));
+      res.end(
+        JSON.stringify({
+          searchResults: {
+            results: Array.from({ length: 5 }, (_, index) => ({
+              memory: `${index}:${'x'.repeat(4000)}`,
+              similarity: 0.9 - index / 100,
+            })),
+          },
+        }),
+      );
     });
 
     const { stdout } = await runHook(
       'recall-directive.js',
-      { session_id: 's-default-budget', cwd: repo, prompt: 'recall the previous implementation' },
+      {
+        session_id: 's-default-budget',
+        cwd: repo,
+        prompt: 'recall the previous implementation',
+      },
       { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
     );
     const context = JSON.parse(stdout).hookSpecificOutput.additionalContext;
@@ -500,7 +603,7 @@ describe('recall-directive hook', () => {
     assert.match(context, /<\/supermemory-recall>$/);
   });
 
-  test('marks only memories emitted within the prompt budget as seen', async (t) => {
+  test('persists only the emitted fragment of a truncated memory', async (t) => {
     const { repo } = makeRepo(t);
     const home = makeAuthedHome(t);
     writeFileSync(
@@ -511,7 +614,7 @@ describe('recall-directive hook', () => {
       memory: `${prefix}:${prefix.repeat(1000)}`,
       similarity: 0.9 - index / 100,
     }));
-    const stub = await startStubServer(t, (record, res) => {
+    const stub = await startStubServer(t, (_record, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ searchResults: { results: hits } }));
     });
@@ -520,21 +623,50 @@ describe('recall-directive hook', () => {
       cwd: repo,
       prompt: 'recall the long ordered memories',
     };
-    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_API_URL: stub.url,
+    };
 
-    const first = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
+    const formatted = formatRecallContext(hits, {
+      containerTag: 'repo_example_project',
+      customContainers: [],
+      maxTokens: 150,
+    });
+    assert.equal(formatted.newFacts.length, 1);
+    assert.match(formatted.newFacts[0], /^A:A+…$/);
+    assert.notEqual(formatted.newFacts[0], hits[0].memory);
+
+    const first = JSON.parse(
+      (await runHook('recall-directive.js', input, env)).stdout,
+    );
     assert.match(first.hookSpecificOutput.additionalContext, /A:AAA/);
     assert.doesNotMatch(first.hookSpecificOutput.additionalContext, /B:BBB/);
 
-    const second = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
-    assert.match(second.hookSpecificOutput.additionalContext, /B:BBB/);
-    assert.doesNotMatch(second.hookSpecificOutput.additionalContext, /A:AAA/);
+    const sessionDir = getSessionDir(
+      input.session_id,
+      join(home, '.supermemory-claude', 'statusline'),
+    );
+    const seen = JSON.parse(
+      readFileSync(join(sessionDir, 'recalled.json'), 'utf8'),
+    );
+    assert.ok(seen.includes(hash16(formatted.newFacts[0].toLowerCase())));
+    assert.ok(!seen.includes(hash16(hits[0].memory.toLowerCase())));
+
+    const second = JSON.parse(
+      (await runHook('recall-directive.js', input, env)).stdout,
+    );
+    assert.match(second.hookSpecificOutput.additionalContext, /A:AAA/);
   });
 
   test('does not persist a prefix-only memory as seen', async (t) => {
     const { repo } = makeRepo(t);
     const home = makeAuthedHome(t);
-    const formatterOptions = { containerTag: 'repo_test', customContainers: [] };
+    const formatterOptions = {
+      containerTag: 'repo_test',
+      customContainers: [],
+    };
     let minimumTokens = null;
     for (let tokens = 0.25; tokens < 500; tokens += 0.25) {
       try {
@@ -548,23 +680,31 @@ describe('recall-directive hook', () => {
       join(home, '.supermemory-claude', 'settings.json'),
       JSON.stringify({ maxPromptRecallTokens: minimumTokens + 0.5 }),
     );
-    const stub = await startStubServer(t, (record, res) => {
+    const stub = await startStubServer(t, (_record, res) => {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({
-        searchResults: {
-          results: [{ memory: 'must remain eligible', similarity: 0.9 }],
-        },
-      }));
+      res.end(
+        JSON.stringify({
+          searchResults: {
+            results: [{ memory: 'must remain eligible', similarity: 0.9 }],
+          },
+        }),
+      );
     });
     const input = {
       session_id: 's-prefix-only',
       cwd: repo,
       prompt: 'recall the still eligible memory',
     };
-    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_API_URL: stub.url,
+    };
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const output = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
+      const output = JSON.parse(
+        (await runHook('recall-directive.js', input, env)).stdout,
+      );
       assert.equal(output.hookSpecificOutput, undefined);
     }
     const sessionDir = getSessionDir(
@@ -582,7 +722,7 @@ describe('recall-directive hook', () => {
       join(home, '.supermemory-claude', 'credentials.json'),
       JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
     );
-    const stub = await startStubServer(t, (record, res) => res.end('{}'));
+    const stub = await startStubServer(t, (_record, res) => res.end('{}'));
     for (const prompt of ['hi', '/supermemory:status', '!ls', undefined]) {
       const { stdout } = await runHook(
         'recall-directive.js',
@@ -605,25 +745,51 @@ describe('recall-directive hook', () => {
       { memory: 'Chose Drizzle over Prisma', similarity: 0.82 },
       { memory: 'Errors must be loud and obvious', similarity: 0.71 },
     ];
-    const stub = await startStubServer(t, (record, res) => {
+    const stub = await startStubServer(t, (_record, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ searchResults: { results: hits } }));
     });
-    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
-    const input = { session_id: 's-dedup', cwd: repo, prompt: 'continue the database work' };
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_API_URL: stub.url,
+    };
+    const input = {
+      session_id: 's-dedup',
+      cwd: repo,
+      prompt: 'continue the database work',
+    };
 
-    const first = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
-    assert.match(plain(first.systemMessage), /^◪ supermemory · recalled 2 memories \(\d+ tok\)$/);
+    const first = JSON.parse(
+      (await runHook('recall-directive.js', input, env)).stdout,
+    );
+    assert.match(
+      plain(first.systemMessage),
+      /^◪ supermemory · recalled 2 memories \(\d+ tok\)$/,
+    );
 
-    const second = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
+    const second = JSON.parse(
+      (await runHook('recall-directive.js', input, env)).stdout,
+    );
     assert.equal(second.systemMessage, undefined);
     assert.equal(second.hookSpecificOutput, undefined);
 
     hits = [...hits, { memory: 'New fact about migrations', similarity: 0.8 }];
-    const third = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
-    assert.match(plain(third.systemMessage), /^◪ supermemory · recalled 1 new \(\d+ tok\) · 2 already in context$/);
-    assert.match(third.hookSpecificOutput.additionalContext, /New fact about migrations/);
-    assert.doesNotMatch(third.hookSpecificOutput.additionalContext, /Chose Drizzle over Prisma/);
+    const third = JSON.parse(
+      (await runHook('recall-directive.js', input, env)).stdout,
+    );
+    assert.match(
+      plain(third.systemMessage),
+      /^◪ supermemory · recalled 1 new \(\d+ tok\) · 2 already in context$/,
+    );
+    assert.match(
+      third.hookSpecificOutput.additionalContext,
+      /New fact about migrations/,
+    );
+    assert.doesNotMatch(
+      third.hookSpecificOutput.additionalContext,
+      /Chose Drizzle over Prisma/,
+    );
 
     const state = readState('s-dedup', {
       dataDir: join(home, '.supermemory-claude', 'statusline'),
@@ -635,7 +801,11 @@ describe('recall-directive hook', () => {
 
   test('a configured recallDirective restores advisory mode verbatim', async (t) => {
     const { repo, git, home } = makeRepo(t);
-    const configDir = join(git(['rev-parse', '--show-toplevel']), '.claude', '.supermemory-claude');
+    const configDir = join(
+      git(['rev-parse', '--show-toplevel']),
+      '.claude',
+      '.supermemory-claude',
+    );
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),
@@ -646,267 +816,9 @@ describe('recall-directive hook', () => {
       { session_id: 's1', cwd: repo, prompt: 'a long substantive prompt here' },
       { HOME: home, USERPROFILE: home },
     );
-    assert.equal(JSON.parse(stdout).hookSpecificOutput.additionalContext, 'CUSTOM DIRECTIVE');
+    assert.equal(
+      JSON.parse(stdout).hookSpecificOutput.additionalContext,
+      'CUSTOM DIRECTIVE',
+    );
   });
 });
-
-describe('status check', () => {
-  test('probes the same-key mirrored endpoint without printing the key', async (t) => {
-    const { repo } = makeRepo(t);
-    const apiKey = 'sm_status_secret_0123456789';
-    const home = makeAuthedHome(t, apiKey);
-    const stub = await startStubServer(t, (record, res) => {
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ profile: { static: [], dynamic: [] } }));
-    });
-    const sharedDir = join(home, '.codex', 'supermemory');
-    mkdirSync(sharedDir, { recursive: true });
-    writeFileSync(
-      join(sharedDir, 'credentials.json'),
-      JSON.stringify({ apiKey, apiBaseUrl: stub.url }),
-    );
-
-    const result = await new Promise((resolve, reject) => {
-      const child = spawn('node', [join(HOOKS_DIR, 'status-check.js')], {
-        cwd: repo,
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home,
-          SUPERMEMORY_API_URL: '',
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (chunk) => { stdout += chunk; });
-      child.stderr.on('data', (chunk) => { stderr += chunk; });
-      child.on('error', reject);
-      child.on('close', (code) => resolve({ code, stdout, stderr }));
-    });
-
-    assert.equal(result.code, 0, result.stderr);
-    assert.doesNotMatch(result.stdout, new RegExp(apiKey));
-    const output = JSON.parse(result.stdout);
-    assert.equal(output.authenticated, true);
-    assert.equal(output.keySource, '~/.supermemory-claude/credentials.json');
-    assert.equal(output.baseUrl, stub.url);
-    assert.equal(output.httpStatus, 200);
-    assert.equal(stub.requests.length, 1);
-    assert.equal(stub.requests[0].url, '/v4/profile');
-    assert.equal(stub.requests[0].headers.authorization, `Bearer ${apiKey}`);
-  });
-});
-
-describe('session-start hook', () => {
-  test('injects profile memories and announces the count', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
-    const stub = await startStubServer(t, (record, res) => {
-      res.setHeader('Content-Type', 'application/json');
-      res.end(
-        JSON.stringify({
-          profile: { static: ['Uses Bun'], dynamic: ['Working on statusline'] },
-        }),
-      );
-    });
-
-    const { code, stdout } = await runHook(
-      'session-start.js',
-      { session_id: 'sess-1', cwd: repo },
-      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
-    );
-    assert.equal(code, 0);
-    const output = JSON.parse(stdout);
-    assert.match(output.hookSpecificOutput.additionalContext, /Uses Bun/);
-    assert.match(output.hookSpecificOutput.additionalContext, /Working on statusline/);
-    assert.match(plain(output.systemMessage), /◪ supermemory · 2 memories loaded for Example\.Project/);
-    assert.equal(stub.requests[0].url, '/v4/profile');
-    assert.match(stub.requests[0].headers.authorization, /^Bearer sm_test/);
-
-    const state = readState('sess-1', {
-      dataDir: join(home, '.supermemory-claude', 'statusline'),
-    });
-    assert.equal(state.context.status, 'ready');
-    assert.equal(state.context.memoryItemsLoaded, 2);
-  });
-
-  test('loads profile facts from shared automatic containers', async (t) => {
-    const { repo } = makeRepo(t);
-    const home = makeAuthedHome(t);
-    mkdirSync(join(home, '.codex'), { recursive: true });
-    writeFileSync(
-      join(home, '.codex', 'supermemory.json'),
-      JSON.stringify({
-        maxProfileItems: 15,
-        maxRecallTokens: 5000,
-        autoRecallContainers: true,
-        customContainers: [
-          { tag: 'coding_personal', description: 'Personal coding decisions.' },
-          { tag: 'copla_company', description: 'Company knowledge.' },
-        ],
-      }),
-    );
-    const stub = await startStubServer(t, (record, res) => {
-      const { containerTag } = JSON.parse(record.body);
-      res.setHeader('Content-Type', 'application/json');
-      res.end(
-        JSON.stringify({
-          profile: {
-            static: [`static:${containerTag}`],
-            dynamic: [`dynamic:${containerTag}`],
-          },
-        }),
-      );
-    });
-
-    const { stdout } = await runHook(
-      'session-start.js',
-      { session_id: 'sess-shared-config', cwd: repo },
-      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
-    );
-    const output = JSON.parse(stdout);
-    const context = output.hookSpecificOutput.additionalContext;
-    assert.equal(stub.requests.length, 3);
-    assert.match(context, /static:coding_personal/);
-    assert.match(context, /dynamic:copla_company/);
-    assert.ok(context.length <= 20000);
-    assert.match(context, /<\/supermemory-context>$/);
-    assert.match(plain(output.systemMessage), /6 memories loaded/);
-  });
-});
-
-describe('capture hook', () => {
-  test('uses the same-key mirrored Codex endpoint for writes', async (t) => {
-    const { repo } = makeRepo(t);
-    const apiKey = 'sm_test_key_0123456789abcdef';
-    const home = makeAuthedHome(t, apiKey);
-    const transcript = join(makeTempDir(t, 'mirrored-capture'), 'session.jsonl');
-    writeFileSync(
-      transcript,
-      JSON.stringify({
-        type: 'user',
-        uuid: 'u1',
-        timestamp: '2026-09-02T08:00:00Z',
-        message: { content: 'Remember the mirrored capture endpoint' },
-      }),
-    );
-    const stub = await startStubServer(t, (record, res) => {
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ id: 'doc_mirrored', status: 'queued' }));
-    });
-    const sharedDir = join(home, '.codex', 'supermemory');
-    mkdirSync(sharedDir, { recursive: true });
-    writeFileSync(
-      join(sharedDir, 'credentials.json'),
-      JSON.stringify({ apiKey, apiBaseUrl: stub.url }),
-    );
-
-    const { code, stderr } = await runHook(
-      'capture.js',
-      { session_id: 'sess-mirrored-capture', cwd: repo, transcript_path: transcript },
-      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: '' },
-    );
-    assert.equal(code, 0, stderr);
-    assert.equal(stub.requests.length, 1);
-    assert.equal(stub.requests[0].url, '/v3/documents');
-  });
-
-  test('saves the transcript delta with scope metadata and entity context', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
-    const transcript = join(makeTempDir(t, 'transcript'), 'session.jsonl');
-    writeFileSync(
-      transcript,
-      [
-        JSON.stringify({
-          type: 'user',
-          uuid: 'u1',
-          timestamp: '2026-08-18T20:00:00Z',
-          message: { content: 'Please fix the statusline symlink handling in the plugin' },
-        }),
-        JSON.stringify({
-          type: 'assistant',
-          uuid: 'a1',
-          message: {
-            content: [{ type: 'text', text: 'Fixed: the symlink now re-points each session.' }],
-          },
-        }),
-      ].join('\n'),
-    );
-    const stub = await startStubServer(t, (record, res) => {
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ id: 'doc_123', status: 'queued' }));
-    });
-
-    const { code } = await runHook(
-      'capture.js',
-      { session_id: 'sess-2', cwd: repo, transcript_path: transcript },
-      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
-    );
-    assert.equal(code, 0);
-    assert.equal(stub.requests.length, 1);
-    assert.equal(stub.requests[0].url, '/v3/documents');
-    const body = JSON.parse(stub.requests[0].body);
-    assert.match(body.content, /statusline symlink/);
-    assert.match(body.containerTag, /^repo_example_project__/);
-    assert.equal(body.metadata.sm_scope, 'personal');
-    assert.equal(body.customId, 'sess-2');
-    assert.match(body.entityContext, /EXTRACT/);
-
-    const state = readState('sess-2', {
-      dataDir: join(home, '.supermemory-claude', 'statusline'),
-    });
-    assert.equal(state.capture.status, 'saved');
-  });
-
-  test('a failed save does not advance the cursor; the retry recaptures (issue #96)', async (t) => {
-    const { repo, home } = makeRepo(t);
-    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
-    writeFileSync(
-      join(home, '.supermemory-claude', 'credentials.json'),
-      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
-    );
-    const transcript = join(makeTempDir(t, 'transcript-retry'), 'session.jsonl');
-    writeFileSync(
-      transcript,
-      JSON.stringify({
-        type: 'user',
-        uuid: 'u1',
-        timestamp: '2026-08-18T20:00:00Z',
-        message: { content: 'Remember: we chose Drizzle over Prisma for performance' },
-      }),
-    );
-    let failing = true;
-    const stub = await startStubServer(t, (record, res) => {
-      res.statusCode = failing ? 500 : 200;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify(failing ? { error: 'boom' } : { id: 'doc_9' }));
-    });
-    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
-    const input = { session_id: 'sess-retry', cwd: repo, transcript_path: transcript };
-
-    await runHook('capture.js', input, env);
-    const dataDir = join(home, '.supermemory-claude', 'statusline');
-    assert.equal(readState('sess-retry', { dataDir }).capture.status, 'error');
-
-    failing = false;
-    await runHook('capture.js', input, env);
-    assert.equal(stub.requests.length, 2);
-    assert.match(JSON.parse(stub.requests[1].body).content, /Drizzle over Prisma/);
-    assert.equal(readState('sess-retry', { dataDir }).capture.status, 'saved');
-
-    // Cursor advanced after success: a third run finds nothing new.
-    await runHook('capture.js', input, env);
-    assert.equal(stub.requests.length, 2);
-  });
-});
-

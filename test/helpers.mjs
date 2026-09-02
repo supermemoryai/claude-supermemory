@@ -3,8 +3,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
-import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 export const HOOKS_DIR = join(process.cwd(), 'plugin', 'hooks');
 
@@ -14,12 +14,16 @@ export function hash16(input) {
 
 export function plain(value) {
   return typeof value === 'string'
-    ? value.replace(/\x1b(\[[0-9;]*m|\]8;;[^\x07]*\x07)/g, '')
+    ? // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI and OSC escapes are the input.
+      value.replace(/\x1b(\[[0-9;]*m|\]8;;[^\x07]*\x07)/g, '')
     : value;
 }
 
 export function makeTempDir(t, prefix) {
-  const root = join(tmpdir(), `claude-sm-${prefix}-${Date.now()}-${Math.random()}`);
+  const root = join(
+    tmpdir(),
+    `claude-sm-${prefix}-${Date.now()}-${Math.random()}`,
+  );
   mkdirSync(root, { recursive: true });
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
@@ -53,8 +57,12 @@ export function runHook(name, input, env = {}) {
     });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
     child.on('error', reject);
     child.on('close', (code) => resolve({ code, stdout, stderr }));
     child.stdin.end(JSON.stringify(input));
@@ -66,7 +74,9 @@ export function startStubServer(t, handler) {
     const requests = [];
     const server = http.createServer((req, res) => {
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
       req.on('end', () => {
         const record = {
           method: req.method,

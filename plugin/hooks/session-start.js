@@ -123,7 +123,9 @@ function welcomeBackNotice(containerTag) {
     const hours = (Date.now() - new Date(last.savedAt).getTime()) / 3600000;
     if (hours < 6) return null;
     const ago =
-      hours < 48 ? `${Math.round(hours)}h ago` : `${Math.round(hours / 24)}d ago`;
+      hours < 48
+        ? `${Math.round(hours)}h ago`
+        : `${Math.round(hours / 24)}d ago`;
     return `welcome back — last session here ${ago}`;
   } catch {
     return null;
@@ -152,7 +154,10 @@ async function main() {
 
     refreshStatuslineLink();
     pruneState({ dataDir: resolveStatuslineDataDir() });
-    writeState(sessionId, 'context', { status: 'loading', memoryItemsLoaded: 0 });
+    writeState(sessionId, 'context', {
+      status: 'loading',
+      memoryItemsLoaded: 0,
+    });
 
     const projectConfig = loadProjectConfig(cwd);
     const projectName = getProjectName(cwd);
@@ -173,7 +178,10 @@ async function main() {
       try {
         apiKey = await startAuthFlow();
       } catch (authErr) {
-        writeState(sessionId, 'context', { status: 'error', memoryItemsLoaded: 0 });
+        writeState(sessionId, 'context', {
+          status: 'error',
+          memoryItemsLoaded: 0,
+        });
         output(
           `<supermemory-status>
 ${authErr.message === 'AUTH_TIMEOUT' ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
@@ -205,15 +213,12 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
       debugLog(settings, 'Profile fetch failed', { error: err.message });
     }
 
-    const { text: context, newFacts } = formatSessionContext(
-      profileResult,
-      {
-        maxProfileItems: settings.maxProfileItems,
-        maxTokens: settings.maxRecallTokens,
-        containerTag,
-        projectName,
-      },
-    );
+    const { text: context, newFacts } = formatSessionContext(profileResult, {
+      maxProfileItems: settings.maxProfileItems,
+      maxTokens: settings.maxRecallTokens,
+      containerTag,
+      projectName,
+    });
     const loaded = newFacts.length;
 
     writeState(sessionId, 'context', {
@@ -227,7 +232,9 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
         : null;
 
     output(
-      (apiError ? `<supermemory-status>\n${apiError}\n</supermemory-status>\n` : '') +
+      (apiError
+        ? `<supermemory-status>\n${apiError}\n</supermemory-status>\n`
+        : '') +
         (context ||
           (apiError
             ? `<supermemory-context>

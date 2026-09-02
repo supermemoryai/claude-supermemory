@@ -59,9 +59,7 @@ function readSeenHashes(sessionDir) {
     const list = JSON.parse(
       fs.readFileSync(path.join(sessionDir, 'recalled.json'), 'utf8'),
     );
-    return Array.isArray(list)
-      ? list.filter((h) => typeof h === 'string')
-      : [];
+    return Array.isArray(list) ? list.filter((h) => typeof h === 'string') : [];
   } catch {
     return [];
   }
@@ -110,15 +108,15 @@ async function main() {
       prompt.slice(0, MAX_QUERY_LENGTH),
       { timeoutMs: SEARCH_TIMEOUT_MS },
     );
-    const results = mergeProfileResults(
-      responses,
-      settings.maxMemories,
-    ).searchResults.results;
+    const results = mergeProfileResults(responses, settings.maxMemories)
+      .searchResults.results;
 
     const sessionDir = getSessionDir(input.session_id);
     const seen = sessionDir ? readSeenHashes(sessionDir) : [];
     const seenSet = new Set(seen);
-    const fresh = results.filter((result) => !seenSet.has(hashText(resultText(result))));
+    const fresh = results.filter(
+      (result) => !seenSet.has(hashText(resultText(result))),
+    );
     const repeats = results.length - fresh.length;
     const { text: context, newFacts } = formatRecallContext(fresh, {
       containerTag,
@@ -151,10 +149,9 @@ async function main() {
 
     if (sessionDir) {
       try {
-        const emitted = fresh.slice(0, newFacts.length);
         atomicWriteJson(
           path.join(sessionDir, 'recalled.json'),
-          [...seen, ...emitted.map((result) => hashText(resultText(result)))].slice(
+          [...new Set([...seen, ...newFacts.map(hashText)])].slice(
             -MAX_SEEN_HASHES,
           ),
         );

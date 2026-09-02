@@ -1,4 +1,5 @@
 const { getContainerTag } = require('./lib/container-tag');
+const { getProfile } = require('./lib/api');
 const { loadProjectConfig } = require('./lib/project-config');
 const { getApiKey, getBaseUrl } = require('./lib/settings');
 
@@ -13,35 +14,35 @@ async function main() {
     : projectConfig?.apiKey
       ? 'project config'
       : '~/.supermemory-claude/credentials.json';
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
+  let httpStatus;
   try {
-    const response = await fetch(`${baseUrl}/v4/profile`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'x-sm-source': 'claude-code',
-      },
-      body: JSON.stringify({ containerTag, q: 'connectivity probe' }),
-      signal: controller.signal,
+    await getProfile(baseUrl, apiKey, containerTag, 'connectivity probe', {
+      timeoutMs: 8000,
     });
-    console.log(JSON.stringify({
-      authenticated: response.status !== 401 && response.status !== 403,
+    httpStatus = 200;
+  } catch (error) {
+    if (!Number.isInteger(error.status)) throw error;
+    httpStatus = error.status;
+  }
+  console.log(
+    JSON.stringify({
+      authenticated:
+        httpStatus === 200
+          ? true
+          : [401, 403].includes(httpStatus)
+            ? false
+            : null,
       keySource,
       baseUrl,
       containerTag,
-      httpStatus: response.status,
-    }));
-  } finally {
-    clearTimeout(timeout);
-  }
+      httpStatus,
+    }),
+  );
 }
 
 main().catch((error) => {
   console.error(
-    error.name === 'AbortError'
+    error.name === 'AbortError' || error.name === 'TimeoutError'
       ? 'API probe timed out'
       : error.cause?.message || error.message,
   );

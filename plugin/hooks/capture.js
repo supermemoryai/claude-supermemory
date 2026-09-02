@@ -87,7 +87,9 @@ async function main() {
       } catch {}
     }
 
-    debugLog(settings, 'Session turn saved', { length: delta.formatted.length });
+    debugLog(settings, 'Session turn saved', {
+      length: delta.formatted.length,
+    });
     writeOutput({ continue: true });
   } catch (err) {
     const friendly = getUserFriendlyError(err);
