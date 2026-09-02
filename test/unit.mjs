@@ -31,6 +31,7 @@ const {
   getStatusLabel,
   renderStatusline,
 } = require('../plugin/statusline.js');
+const { formatRecallContext } = require('../plugin/hooks/lib/context.js');
 
 const HOOKS_DIR = join(process.cwd(), 'plugin', 'hooks');
 
@@ -221,6 +222,102 @@ describe('recall-directive hook', () => {
     assert.equal(state.search.memories, 4);
   });
 
+  test('mirrors shared Codex limits and globally ranks automatic containers', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
+    );
+    writeFileSync(
+      join(home, '.codex', 'supermemory.json'),
+      JSON.stringify({
+        maxMemories: 15,
+        maxProfileItems: 15,
+        maxRecallTokens: 5000,
+        maxPromptRecallTokens: 2000,
+        autoRecallContainers: true,
+        customContainers: [
+          { tag: 'coding_personal', description: 'Personal coding decisions.' },
+          { tag: 'copla_company', description: 'Company knowledge.' },
+          { tag: 'unavailable', description: 'Temporarily unavailable.' },
+        ],
+      }),
+    );
+    const results = {
+      coding_personal: Array.from({ length: 8 }, (_, index) => ({
+        memory: index === 0 ? 'Tomauskasz GitHub account preference' : `coding-${index}`,
+        similarity: 0.99 - index / 100,
+      })),
+      copla_company: Array.from({ length: 8 }, (_, index) => ({
+        memory: `Copla company knowledge workflow ${index}`,
+        similarity: 0.985 - index / 100,
+      })),
+    };
+    const stub = await startStubServer(t, (record, res) => {
+      const { containerTag } = JSON.parse(record.body);
+      if (containerTag === 'unavailable') {
+        res.statusCode = 503;
+        res.end('unavailable');
+        return;
+      }
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          searchResults: {
+            results:
+              results[containerTag] ||
+              Array.from({ length: 8 }, (_, index) => ({
+                memory: `repo-${index}`,
+                similarity: 0.97 - index / 100,
+              })),
+          },
+        }),
+      );
+    });
+
+    const { stdout } = await runHook(
+      'recall-directive.js',
+      {
+        session_id: 's-shared-config',
+        cwd: repo,
+        prompt: 'recall personal GitHub preferences and Copla company workflows',
+      },
+      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
+    );
+    const context = JSON.parse(stdout).hookSpecificOutput.additionalContext;
+    const tags = stub.requests.map((request) => JSON.parse(request.body).containerTag);
+    assert.deepEqual(new Set(tags), new Set([
+      `repo_example_project__${hash16('github.com/acme/example.project')}`,
+      'coding_personal',
+      'copla_company',
+      'unavailable',
+    ]));
+    assert.equal((context.match(/^- ◪ /gm) || []).length, 15);
+    assert.ok(context.indexOf('Tomauskasz') < context.indexOf('repo-0'));
+    assert.match(context, /Copla company knowledge workflow/);
+    assert.match(context, /Configured automatic recall containers:/);
+    assert.ok(context.length <= 8000);
+    assert.match(context, /<\/supermemory-recall>$/);
+  });
+
+  test('preserves complete recall wrappers at the token budget', () => {
+    const { text, newFacts } = formatRecallContext(
+      [{ memory: 'x'.repeat(4000) }],
+      {
+        containerTag: 'repo_test',
+        maxMemories: 15,
+        maxTokens: 200,
+        customContainers: [],
+      },
+    );
+    assert.ok(text.length <= 800);
+    assert.match(text, /…/);
+    assert.match(text, /<\/supermemory-recall>$/);
+    assert.equal(newFacts.length, 1);
+  });
+
   test('skips trivial prompts and slash commands without an API call', async (t) => {
     const { repo, home } = makeRepo(t);
     mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
@@ -398,6 +495,56 @@ describe('session-start hook', () => {
     });
     assert.equal(state.context.status, 'ready');
     assert.equal(state.context.memoryItemsLoaded, 2);
+  });
+
+  test('loads profile facts from shared automatic containers', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    mkdirSync(join(home, '.codex'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
+    );
+    writeFileSync(
+      join(home, '.codex', 'supermemory.json'),
+      JSON.stringify({
+        maxMemories: 15,
+        maxProfileItems: 15,
+        maxRecallTokens: 5000,
+        maxPromptRecallTokens: 2000,
+        autoRecallContainers: true,
+        customContainers: [
+          { tag: 'coding_personal', description: 'Personal coding decisions.' },
+          { tag: 'copla_company', description: 'Company knowledge.' },
+        ],
+      }),
+    );
+    const stub = await startStubServer(t, (record, res) => {
+      const { containerTag } = JSON.parse(record.body);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          profile: {
+            static: [`static:${containerTag}`],
+            dynamic: [`dynamic:${containerTag}`],
+          },
+        }),
+      );
+    });
+
+    const { stdout } = await runHook(
+      'session-start.js',
+      { session_id: 'sess-shared-config', cwd: repo },
+      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
+    );
+    const output = JSON.parse(stdout);
+    const context = output.hookSpecificOutput.additionalContext;
+    assert.equal(stub.requests.length, 3);
+    assert.match(context, /static:coding_personal/);
+    assert.match(context, /dynamic:copla_company/);
+    assert.ok(context.length <= 20000);
+    assert.match(context, /<\/supermemory-context>$/);
+    assert.match(plain(output.systemMessage), /6 memories loaded/);
   });
 });
 

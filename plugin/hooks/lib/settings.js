@@ -7,10 +7,20 @@ const { loadProjectConfig } = require('./project-config');
 const BASE_URL = 'https://api.supermemory.ai';
 const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json');
+const SHARED_SETTINGS_FILE = path.join(
+  os.homedir(),
+  '.codex',
+  'supermemory.json',
+);
 
 const DEFAULT_SETTINGS = {
   includeTools: [],
+  maxMemories: 5,
   maxProfileItems: 5,
+  maxRecallTokens: 2500,
+  maxPromptRecallTokens: null,
+  autoRecallContainers: false,
+  customContainers: [],
   debug: false,
   injectProfile: true,
   recallDirective: null,
@@ -39,13 +49,26 @@ const DEFAULT_SETTINGS = {
 
 function loadSettings() {
   const settings = { ...DEFAULT_SETTINGS };
-  try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      Object.assign(settings, JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8')));
+  for (const file of [SHARED_SETTINGS_FILE, SETTINGS_FILE]) {
+    try {
+      if (fs.existsSync(file)) {
+        Object.assign(settings, JSON.parse(fs.readFileSync(file, 'utf-8')));
+      }
+    } catch (err) {
+      console.error(`Settings: Failed to load ${file}: ${err.message}`);
     }
-  } catch (err) {
-    console.error(`Settings: Failed to load ${SETTINGS_FILE}: ${err.message}`);
   }
+  settings.maxPromptRecallTokens ??= settings.maxRecallTokens;
+  settings.customContainers = Array.isArray(settings.customContainers)
+    ? settings.customContainers.filter(
+        (container) =>
+          container &&
+          typeof container.tag === 'string' &&
+          container.tag.trim() &&
+          typeof container.description === 'string' &&
+          container.description.trim(),
+      )
+    : [];
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
   return settings;
 }
@@ -144,12 +167,19 @@ function getRecallConfig(cwd) {
   const projectConfig = loadProjectConfig(cwd || process.cwd());
   return {
     directive: projectConfig?.recallDirective || settings.recallDirective || null,
+    maxMemories: settings.maxMemories,
+    maxProfileItems: settings.maxProfileItems,
+    maxRecallTokens: settings.maxRecallTokens,
+    maxPromptRecallTokens: settings.maxPromptRecallTokens,
+    autoRecallContainers: settings.autoRecallContainers,
+    customContainers: settings.customContainers,
   };
 }
 
 module.exports = {
   SETTINGS_DIR,
   SETTINGS_FILE,
+  SHARED_SETTINGS_FILE,
   DEFAULT_SETTINGS,
   loadSettings,
   getApiKey,

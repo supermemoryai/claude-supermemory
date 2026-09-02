@@ -51,6 +51,21 @@ function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
   return post(baseUrl, apiKey, '/v4/profile', { containerTag, q: query }, options.timeoutMs);
 }
 
+async function getProfiles(baseUrl, apiKey, containerTags, query, options = {}) {
+  const settled = await Promise.allSettled(
+    [...new Set(containerTags.filter(Boolean))].map((containerTag) =>
+      getProfile(baseUrl, apiKey, containerTag, query, options),
+    ),
+  );
+  const profiles = settled
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value);
+  if (profiles.length === 0) {
+    throw settled.find((result) => result.status === 'rejected')?.reason;
+  }
+  return profiles;
+}
+
 function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {}) {
   const body = {
     content,
@@ -62,4 +77,4 @@ function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {
   return post(baseUrl, apiKey, '/v3/documents', body, options.timeoutMs);
 }
 
-module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory };
+module.exports = { AGENT_ENTITY_CONTEXT, getProfile, getProfiles, addMemory };

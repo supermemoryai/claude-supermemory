@@ -1,14 +1,20 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { getProfile } = require('./lib/api');
+const { getProfiles } = require('./lib/api');
 const { getContainerTag, getProjectName } = require('./lib/container-tag');
+const {
+  formatSessionContext,
+  getRecallContainerTags,
+  mergeProfileResults,
+} = require('./lib/context');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
   loadSettings,
   getApiKey,
   getBaseUrl,
   debugLog,
+  getRecallConfig,
 } = require('./lib/settings');
 const { BRAND, MARK, bold, gray } = require('./lib/colors');
 const { readStdin, writeOutput } = require('./lib/stdin');
@@ -125,31 +131,6 @@ function welcomeBackNotice(containerTag) {
   }
 }
 
-function formatContext(profileResult, maxItems, containerTag, projectName) {
-  const statics = (profileResult?.profile?.static || []).slice(0, maxItems);
-  const dynamics = (profileResult?.profile?.dynamic || []).slice(0, maxItems);
-  if (statics.length === 0 && dynamics.length === 0) return null;
-
-  const sections = [];
-  if (statics.length > 0) {
-    sections.push(
-      `## User Profile (Persistent)\n${statics.map((f) => `- ◪ ${f}`).join('\n')}`,
-    );
-  }
-  if (dynamics.length > 0) {
-    sections.push(
-      `## Recent Context\n${dynamics.map((f) => `- ◪ ${f}`).join('\n')}`,
-    );
-  }
-
-  return `<supermemory-context>
-Recalled memory for this project (${projectName}). Every line marked ◪ comes from supermemory — when citing one, keep the mark and phrase it naturally (e.g. "◪ last week you told me about X"). If you name the source, say "from supermemory" — never "from memory".
-This project's memory container: ${containerTag}
-
-${sections.join('\n\n')}
-</supermemory-context>`;
-}
-
 function output(additionalContext, systemMessageParts) {
   const systemMessage = systemMessageParts.filter(Boolean).join('\n');
   writeOutput({
@@ -177,8 +158,15 @@ async function main() {
     const projectConfig = loadProjectConfig(cwd);
     const projectName = getProjectName(cwd);
     const containerTag = getContainerTag(cwd);
+    const recallConfig = getRecallConfig(cwd);
+    const containerTags = getRecallContainerTags(containerTag, recallConfig);
 
-    debugLog(settings, 'SessionStart', { cwd, projectName, containerTag });
+    debugLog(settings, 'SessionStart', {
+      cwd,
+      projectName,
+      containerTag,
+      containerTags,
+    });
 
     let apiKey;
     try {
@@ -205,7 +193,13 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
     let profileResult = null;
     let apiError = null;
     try {
-      profileResult = await getProfile(baseUrl, apiKey, containerTag, projectName);
+      const responses = await getProfiles(
+        baseUrl,
+        apiKey,
+        containerTags,
+        undefined,
+      );
+      profileResult = mergeProfileResults(responses, recallConfig.maxMemories);
     } catch (err) {
       // Fail open, but never silently: a network failure must not be dressed
       // up as "this project has no memories". Only 404 means genuinely empty.
@@ -213,15 +207,16 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
       debugLog(settings, 'Profile fetch failed', { error: err.message });
     }
 
-    const context = formatContext(
+    const { text: context, newFacts } = formatSessionContext(
       profileResult,
-      settings.maxProfileItems,
-      containerTag,
-      projectName,
+      {
+        maxProfileItems: recallConfig.maxProfileItems,
+        maxTokens: recallConfig.maxRecallTokens,
+        containerTag,
+        projectName,
+      },
     );
-    const loaded =
-      Math.min(profileResult?.profile?.static?.length || 0, settings.maxProfileItems) +
-      Math.min(profileResult?.profile?.dynamic?.length || 0, settings.maxProfileItems);
+    const loaded = newFacts.length;
 
     writeState(sessionId, 'context', {
       status: apiError ? 'error' : 'ready',
