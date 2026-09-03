@@ -6,7 +6,6 @@
 
 [![version](https://img.shields.io/github/package-json/v/supermemoryai/claude-supermemory/main?filename=plugin%2F.claude-plugin%2Fplugin.json&label=version&color=9C5C10)](https://github.com/supermemoryai/claude-supermemory)
 [![license](https://img.shields.io/badge/license-MIT-9C5C10)](#license)
-[![Claude Code](https://img.shields.io/badge/Claude_Code-hooks_%2B_MCP-9C5C10)](https://github.com/supermemoryai/claude-supermemory)
 
 <img width="4000" height="2130" alt="claude-supermemory in action" src="https://github.com/user-attachments/assets/07e63ac4-b67d-457b-9029-1dc5d860e920" />
 
