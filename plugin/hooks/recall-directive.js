@@ -31,7 +31,7 @@ const MAX_QUERY_LENGTH = 500;
 const MAX_RESULTS = 5;
 const MAX_RESULT_CHARS = 300;
 const MIN_SIMILARITY = 0.55;
-const SEARCH_TIMEOUT_MS = 3000;
+const SEARCH_TIMEOUT_MS = 4000;
 const MAX_SEEN_HASHES = 500;
 
 function shouldSkip(prompt) {
@@ -188,6 +188,11 @@ async function main() {
     });
   } catch (err) {
     debugLog(settings, 'Recall directive error', { error: err.message });
+    // A slow recall should not interrupt every prompt with an error banner.
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      writeOutput({ continue: true, suppressOutput: true });
+      return;
+    }
     writeOutput({
       systemMessage: `${BRAND} ${gray('·')} ${red(`recall failed: ${getUserFriendlyError(err).slice(0, 80)}`)}`,
       continue: true,
