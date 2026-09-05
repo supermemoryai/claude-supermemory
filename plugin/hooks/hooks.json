@@ -1,5 +1,5 @@
 {
-  "description": "Supermemory: persistent memory for Claude Code. Injection hooks (SessionStart, UserPromptSubmit, PreToolUse) must stay synchronous — async hooks' output is discarded, which would silently kill context injection and auto-approval. They fail open instead: every network call is capped at 3s and the hook timeout is a backstop, so a dead network never stalls the session. Capture has no output anyone reads, so it runs async.",
+  "description": "Supermemory hooks: SessionStart loads project memories; UserPromptSubmit recalls memories relevant to the prompt; PreToolUse approves read-only Supermemory tool calls; Stop saves new conversation content to memory.",
   "hooks": {
     "SessionStart": [
       {
