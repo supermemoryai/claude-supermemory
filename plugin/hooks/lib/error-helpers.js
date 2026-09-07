@@ -26,7 +26,7 @@ function getUserFriendlyError(err) {
     return 'Bad request \u2014 your API key or request format may be invalid. Check your key at https://console.supermemory.ai';
   }
   if (status === 401) {
-    return 'Authentication failed \u2014 your API key may be expired or revoked. Re-authenticate with the supermemory login command or check https://console.supermemory.ai';
+    return 'Authentication failed \u2014 your credentials may be expired or revoked. Start a new session to sign in, or check your configured API key.';
   }
   if (status === 403) {
     return 'Permission denied \u2014 this feature may require a different Supermemory plan. Check https://supermemory.ai/pricing';

@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { loadCredentials } = require('./auth');
+const { loadCredentials, getAccessToken, getOAuthConfig } = require('./auth');
 const { loadProjectConfig } = require('./project-config');
 
 const BASE_URL = 'https://api.supermemory.ai';
@@ -50,7 +50,7 @@ function loadSettings() {
   return settings;
 }
 
-function getApiKey(cwd, projectConfig) {
+async function getAuthToken(cwd, projectConfig, timeoutMs) {
   if (process.env.SUPERMEMORY_CC_API_KEY)
     return process.env.SUPERMEMORY_CC_API_KEY;
 
@@ -58,9 +58,18 @@ function getApiKey(cwd, projectConfig) {
   if (projectConfig?.apiKey) return projectConfig.apiKey;
 
   const credentials = loadCredentials();
+  if (credentials?.type === 'oauth') {
+    return getAccessToken(
+      getOAuthConfig(
+        getBaseUrl(cwd, projectConfig),
+        getMcpUrl(cwd, projectConfig),
+      ),
+      timeoutMs,
+    );
+  }
   if (credentials?.apiKey) return credentials.apiKey;
 
-  throw new Error('NO_API_KEY');
+  throw Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' });
 }
 
 function normalizeBaseUrl(baseUrl) {
@@ -85,6 +94,23 @@ function getBaseUrl(cwd, projectConfig) {
     throw new Error('Invalid baseUrl: expected an absolute http(s) URL');
   }
   return normalized;
+}
+
+function getMcpUrl(cwd, projectConfig) {
+  if (process.env.SUPERMEMORY_MCP_URL) {
+    const configured = normalizeBaseUrl(process.env.SUPERMEMORY_MCP_URL);
+    if (!configured) throw new Error('Invalid SUPERMEMORY_MCP_URL');
+    return configured;
+  }
+  const api = new URL(getBaseUrl(cwd, projectConfig));
+  if (api.hostname.startsWith('api.')) {
+    api.hostname = api.hostname.replace(/^api\./, 'mcp.');
+    api.pathname = '/mcp';
+    api.search = '';
+    api.hash = '';
+    return api.toString();
+  }
+  throw new Error('Set SUPERMEMORY_MCP_URL for a custom Supermemory backend.');
 }
 
 function debugLog(settings, message, data) {
@@ -152,8 +178,9 @@ module.exports = {
   SETTINGS_FILE,
   DEFAULT_SETTINGS,
   loadSettings,
-  getApiKey,
+  getAuthToken,
   getBaseUrl,
+  getMcpUrl,
   debugLog,
   getIncludeTools,
   shouldIncludeTool,
