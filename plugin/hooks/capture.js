@@ -7,7 +7,7 @@ const {
 const { loadProjectConfig } = require('./lib/project-config');
 const {
   loadSettings,
-  getApiKey,
+  getAuthToken,
   getBaseUrl,
   debugLog,
   getSignalConfig,
@@ -40,7 +40,7 @@ async function main() {
 
     let apiKey;
     try {
-      apiKey = getApiKey(cwd, projectConfig);
+      apiKey = await getAuthToken(cwd, projectConfig);
     } catch {
       writeOutput({ continue: true });
       return;
