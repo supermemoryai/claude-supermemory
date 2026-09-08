@@ -1,14 +1,14 @@
-import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 const ROOT = import.meta.dir;
-const PLUGIN = join(ROOT, "plugin");
+const PLUGIN = join(ROOT, 'plugin');
 
 function parseFrontmatter(text: string) {
   const m = text.match(/^---\n([\s\S]*?)\n---/);
   const fm: Record<string, string> = {};
   if (m) {
-    for (const line of m[1].split("\n")) {
+    for (const line of m[1].split('\n')) {
       const kv = line.match(/^(\S+?):\s*(.*)$/);
       if (kv) fm[kv[1]] = kv[2];
     }
@@ -16,7 +16,7 @@ function parseFrontmatter(text: string) {
   return fm;
 }
 
-function listFiles(dir: string, prefix = ""): { path: string; size: number }[] {
+function listFiles(dir: string, prefix = ''): { path: string; size: number }[] {
   const out: { path: string; size: number }[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -27,17 +27,26 @@ function listFiles(dir: string, prefix = ""): { path: string; size: number }[] {
 }
 
 async function inspect() {
-  const manifest = await Bun.file(join(PLUGIN, ".claude-plugin/plugin.json")).json();
-  const hooksJson = await Bun.file(join(PLUGIN, "hooks/hooks.json")).json();
-  const mcpJson = await Bun.file(join(PLUGIN, ".mcp.json")).json();
+  const manifest = await Bun.file(
+    join(PLUGIN, '.claude-plugin/plugin.json'),
+  ).json();
+  const hooksJson = (await Bun.file(
+    join(PLUGIN, 'hooks/hooks.json'),
+  ).json()) as {
+    hooks: Record<
+      string,
+      { matcher?: string; hooks: { command: string; timeout: number }[] }[]
+    >;
+  };
+  const mcpJson = await Bun.file(join(PLUGIN, '.mcp.json')).json();
 
-  const hooks = Object.entries(hooksJson.hooks).flatMap(([event, groups]: [string, any]) =>
-    groups.flatMap((g: any) =>
-      g.hooks.map((h: any) => {
-        const script = h.command.match(/hooks\/[\w-]+\.js/)?.[0] ?? "";
+  const hooks = Object.entries(hooksJson.hooks).flatMap(([event, groups]) =>
+    groups.flatMap((g) =>
+      g.hooks.map((h) => {
+        const script = h.command.match(/hooks\/[\w-]+\.js/)?.[0] ?? '';
         return {
           event,
-          matcher: g.matcher ?? "*",
+          matcher: g.matcher ?? '*',
           script,
           timeout: h.timeout,
           exists: script ? statSyncSafe(join(PLUGIN, script)) !== null : false,
@@ -47,31 +56,45 @@ async function inspect() {
   );
 
   const commands = await Promise.all(
-    readdirSync(join(PLUGIN, "commands")).map(async (f) => {
-      const content = await Bun.file(join(PLUGIN, "commands", f)).text();
+    readdirSync(join(PLUGIN, 'commands')).map(async (f) => {
+      const content = await Bun.file(join(PLUGIN, 'commands', f)).text();
       const fm = parseFrontmatter(content);
-      return { name: f.replace(".md", ""), description: fm.description ?? "", content };
+      return {
+        name: f.replace('.md', ''),
+        description: fm.description ?? '',
+        content,
+      };
     }),
   );
 
   const agents = await Promise.all(
-    readdirSync(join(PLUGIN, "agents")).map(async (f) => {
-      const content = await Bun.file(join(PLUGIN, "agents", f)).text();
+    readdirSync(join(PLUGIN, 'agents')).map(async (f) => {
+      const content = await Bun.file(join(PLUGIN, 'agents', f)).text();
       const fm = parseFrontmatter(content);
-      return { name: f.replace(".md", ""), description: fm.description ?? "", content };
+      return {
+        name: f.replace('.md', ''),
+        description: fm.description ?? '',
+        content,
+      };
     }),
   );
 
-  const directiveSrc = await Bun.file(join(PLUGIN, "hooks/recall-directive.js")).text();
-  const directive = directiveSrc.match(/return `([\s\S]*?)`;/)?.[1] ?? "";
-  const approveSrc = await Bun.file(join(PLUGIN, "hooks/recall-approve.js")).text();
-  const readOnlyTools = [...approveSrc.matchAll(/^\s*'([\w-]+)',$/gm)].map((m) => m[1]);
+  const approveSrc = await Bun.file(
+    join(PLUGIN, 'hooks/recall-approve.js'),
+  ).text();
+  const readOnlyTools = [...approveSrc.matchAll(/^\s*'([\w-]+)',$/gm)].map(
+    (m) => m[1],
+  );
 
-  let git = { branch: "unknown", commit: "unknown" };
+  let git = { branch: 'unknown', commit: 'unknown' };
   try {
     git = {
-      branch: (await Bun.$`git branch --show-current`.cwd(ROOT).quiet().text()).trim(),
-      commit: (await Bun.$`git log -1 --format=%h %s`.cwd(ROOT).quiet().text()).trim(),
+      branch: (
+        await Bun.$`git branch --show-current`.cwd(ROOT).quiet().text()
+      ).trim(),
+      commit: (
+        await Bun.$`git log -1 --format=%h %s`.cwd(ROOT).quiet().text()
+      ).trim(),
     };
   } catch {}
 
@@ -82,7 +105,6 @@ async function inspect() {
     hooks,
     commands,
     agents,
-    directive,
     readOnlyTools,
     files: listFiles(PLUGIN),
   };
@@ -123,7 +145,6 @@ const html = `<!doctype html>
 <div id="badges"></div>
 <h2>hooks</h2><table id="hooks"></table>
 <h2>mcp server + auto-approved (read-only) tools</h2><div id="mcp"></div>
-<h2>recall directive — injected every prompt</h2><pre id="directive"></pre>
 <h2>agents</h2><div id="agents"></div>
 <h2>commands</h2><div id="commands"></div>
 <h2>plugin files (all committed source, no build)</h2><table id="files"></table>
@@ -132,7 +153,7 @@ const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'
 const kb = n => n < 1024 ? n + ' b' : (n / 1024).toFixed(1) + ' kb';
 const HOOK_NOTES = {
   SessionStart: 'profile fetch → context + "N memories loaded" + welcome-back; auth bootstrap; statusline symlink upkeep',
-  UserPromptSubmit: 'injects recall directive with active container tag (local, no network)',
+  UserPromptSubmit: 'bounded automatic recall from the active and configured containers',
   PreToolUse: 'auto-approves read-only supermemory MCP tools + "recalling: <query>" message',
   Stop: 'captures transcript delta with entityContext; writes statusline state',
 };
@@ -153,7 +174,6 @@ fetch('/api/inspect').then(r => r.json()).then(d => {
     '<p class="dim">server "' + esc(server[0]) + '": ' + esc(server[1].command + ' ' + server[1].args.join(' ')) +
     ' (proxy \\u2192 mcp.supermemory.ai, authed via credentials.json)</p>' +
     d.readOnlyTools.map(t => '<span class="badge ok">' + esc(t) + '</span>').join('');
-  document.getElementById('directive').textContent = d.directive;
   const fileSection = items => items.map(i =>
     '<details><summary>' + esc(i.name) + '<span class="dim">' + esc(i.description) + '</span></summary><pre>' + esc(i.content) + '</pre></details>').join('');
   document.getElementById('agents').innerHTML = fileSection(d.agents);
@@ -170,8 +190,8 @@ fetch('/api/inspect').then(r => r.json()).then(d => {
 const server = Bun.serve({
   port: 4747,
   routes: {
-    "/": () => new Response(html, { headers: { "Content-Type": "text/html" } }),
-    "/api/inspect": async () => Response.json(await inspect()),
+    '/': () => new Response(html, { headers: { 'Content-Type': 'text/html' } }),
+    '/api/inspect': async () => Response.json(await inspect()),
   },
 });
 

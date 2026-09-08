@@ -56,7 +56,7 @@ async function main() {
       return;
     }
 
-    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const baseUrl = getBaseUrl(cwd, projectConfig, apiKey);
     const containerTag = getContainerTag(cwd);
 
     const captured = readState(sessionId).capture?.count || 0;
@@ -87,7 +87,9 @@ async function main() {
       } catch {}
     }
 
-    debugLog(settings, 'Session turn saved', { length: delta.formatted.length });
+    debugLog(settings, 'Session turn saved', {
+      length: delta.formatted.length,
+    });
     writeOutput({ continue: true });
   } catch (err) {
     const friendly = getUserFriendlyError(err);

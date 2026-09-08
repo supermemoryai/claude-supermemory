@@ -41,7 +41,7 @@ export SUPERMEMORY_CC_API_KEY="sm_..."
 
 ## How It Works
 
-- **Reasoned recall** — Before each turn, Claude decides whether recalling memory would actually help your current message, and only searches when it's worth it — every turn, once in a while, or not at all. The search runs automatically (no permission prompt), just like auto-capture. Searching only when needed also keeps more usage on your plan
+- **Automatic recall** — Every substantive prompt searches the repository and configured recall containers, then injects globally ranked, deduplicated matches within the configured context budget
 - **supermemory-search** — Ask about past work or previous sessions, Claude searches your memories
 - **supermemory-save** — Ask to save something important, Claude saves it for the team
 
@@ -85,9 +85,22 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
 
 **Global Settings** — `~/.supermemory-claude/settings.json`
 
+Claude reads only the six recall options below from
+`~/.codex/supermemory.json` when that file exists. Claude-specific settings
+override those shared values; unrelated Codex options never alter Claude.
+When both clients use the same saved API key, Claude also uses Codex's saved
+API base URL. Environment and project-specific URL overrides still take priority.
+
 ```json
 {
-  "maxProfileItems": 5,
+  "maxMemories": 15,
+  "maxProfileItems": 15,
+  "maxRecallTokens": 5000,
+  "maxPromptRecallTokens": 2000,
+  "autoRecallContainers": true,
+  "customContainers": [
+    { "tag": "coding_personal", "description": "Cross-project coding preferences." }
+  ],
   "signalExtraction": true,
   "signalKeywords": ["remember", "architecture", "decision", "bug", "fix"],
   "signalTurnsBefore": 3,
@@ -95,14 +108,19 @@ SUPERMEMORY_DEBUG=true           # Optional: enable debug logging
 }
 ```
 
-| Option              | Description                                   |
-| ------------------- | --------------------------------------------- |
-| `maxProfileItems`   | Max memories in context (default: 5)          |
-| `recallDirective`   | Override the built-in reasoned-recall instruction Claude is given |
-| `signalExtraction`  | Only capture important turns (default: false) |
-| `signalKeywords`    | Keywords that trigger capture                 |
-| `signalTurnsBefore` | Context turns before signal (default: 3)      |
-| `includeTools`      | Tools to explicitly capture                   |
+| Option                    | Description |
+| ------------------------- | ----------- |
+| `maxMemories`             | Maximum globally ranked prompt matches across all searched containers (default: 5) |
+| `maxProfileItems`         | Maximum static and dynamic profile items per section (default: 5) |
+| `maxRecallTokens`         | Approximate whole-context SessionStart budget (default: 2500) |
+| `maxPromptRecallTokens`   | Approximate whole-context prompt-recall budget (default: 500) |
+| `autoRecallContainers`    | Search every valid `customContainers` entry automatically (default: false) |
+| `customContainers`        | Additional recall containers with `tag` and `description` fields |
+| `recallDirective`         | Replace automatic prompt recall with a custom advisory instruction |
+| `signalExtraction`        | Only capture important turns (default: false) |
+| `signalKeywords`          | Keywords that trigger capture |
+| `signalTurnsBefore`       | Context turns before signal (default: 3) |
+| `includeTools`            | Tools to explicitly capture |
 
 **Project Config** — `.claude/.supermemory-claude/config.json`
 

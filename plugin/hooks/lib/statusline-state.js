@@ -11,7 +11,9 @@ const SESSION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 // Fixed location: hooks and the statusline renderer run in different process
 // environments, so neither may trust env vars to find the other's state.
 function resolveStatuslineDataDir(explicitDir) {
-  return explicitDir || path.join(os.homedir(), '.supermemory-claude', 'statusline');
+  return (
+    explicitDir || path.join(os.homedir(), '.supermemory-claude', 'statusline')
+  );
 }
 
 function hashValue(value) {

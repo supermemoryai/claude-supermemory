@@ -5,7 +5,7 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "test": "node --test test/unit.mjs",
+    "test": "node --test test/unit.mjs test/recall.mjs test/status.mjs test/session-start.mjs test/capture.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write ."
