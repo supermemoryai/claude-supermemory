@@ -177,15 +177,13 @@ describe('recall-directive hook', () => {
       res.setHeader('Content-Type', 'application/json');
       res.end(
         JSON.stringify({
-          searchResults: {
-            results: [
-              { memory: 'Chose Drizzle over Prisma', similarity: 0.82 },
-              { chunk: 'export const db = drizzle(client)', filepath: 'src/db.ts', similarity: 0.74 },
-              { memory: 'Errors must be loud and obvious', similarity: 0.71 },
-              { title: 'Migration plan', content: 'Use expand-contract migrations', similarity: 0.7 },
-              { memory: 'irrelevant low-similarity hit', similarity: 0.2 },
-            ],
-          },
+          results: [
+            { memory: 'Chose Drizzle over Prisma', similarity: 0.82 },
+            { chunk: 'export const db = drizzle(client)', filepath: 'src/db.ts', similarity: 0.74 },
+            { memory: 'Errors must be loud and obvious', similarity: 0.71 },
+            { title: 'Migration plan', content: 'Use expand-contract migrations', similarity: 0.7 },
+            { memory: 'irrelevant low-similarity hit', similarity: 0.2 },
+          ],
         }),
       );
     });
@@ -207,11 +205,11 @@ describe('recall-directive hook', () => {
     assert.doesNotMatch(context, /irrelevant low-similarity hit/);
     assert.match(context, /repo_example_project__/);
     assert.match(plain(output.systemMessage), /^◪ supermemory · recalled \d+ memories \(\d+ tok\)$/);
-    assert.equal(stub.requests[0].url, '/v4/profile');
-    assert.equal(
-      JSON.parse(stub.requests[0].body).q,
-      'continue the database work from before',
-    );
+    assert.equal(stub.requests[0].url, '/v3/search');
+    const requestBody = JSON.parse(stub.requests[0].body);
+    assert.equal(requestBody.q, 'continue the database work from before');
+    assert.match(requestBody.containerTag, /^repo_example_project__/);
+    assert.deepEqual(requestBody.containerTags, [requestBody.containerTag]);
 
     const state = readState('s1', {
       dataDir: join(home, '.supermemory-claude', 'statusline'),
@@ -253,7 +251,7 @@ describe('recall-directive hook', () => {
     ];
     const stub = await startStubServer(t, (record, res) => {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ searchResults: { results: hits } }));
+      res.end(JSON.stringify({ results: hits }));
     });
     const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
     const input = { session_id: 's-dedup', cwd: repo, prompt: 'continue the database work' };
@@ -293,6 +291,57 @@ describe('recall-directive hook', () => {
       { HOME: home, USERPROFILE: home },
     );
     assert.equal(JSON.parse(stdout).hookSpecificOutput.additionalContext, 'CUSTOM DIRECTIVE');
+  });
+
+  test('recalls via /v3/search including score and nested chunk shapes (issue #106)', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
+    );
+    const stub = await startStubServer(t, (record, res) => {
+      assert.equal(record.url, '/v3/search');
+      res.setHeader('Content-Type', 'application/json');
+      // Self-hosted shape from #106: score instead of similarity, and a
+      // document hit carrying nested chunks (total counts chunks, results
+      // length can be 1).
+      res.end(
+        JSON.stringify({
+          results: [
+            {
+              title: 'Region runbook',
+              score: 0.767,
+              chunks: [
+                { content: 'Failover steps for multi-region deploy', score: 0.767 },
+                { chunk: 'Health checks must probe both regions', score: 0.71 },
+              ],
+            },
+            { memory: 'too weak to inject', score: 0.2 },
+          ],
+          total: 3,
+        }),
+      );
+    });
+
+    const { code, stdout } = await runHook(
+      'recall-directive.js',
+      {
+        session_id: 's-v3',
+        cwd: repo,
+        prompt: 'how can I see all the things supermemory have saved already',
+      },
+      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
+    );
+    assert.equal(code, 0);
+    const output = JSON.parse(stdout);
+    const context = output.hookSpecificOutput.additionalContext;
+    assert.match(context, /Failover steps for multi-region deploy/);
+    assert.match(context, /Health checks must probe both regions/);
+    assert.doesNotMatch(context, /too weak to inject/);
+    assert.match(plain(output.systemMessage), /^◪ supermemory · recalled 2 memories \(\d+ tok\)$/);
+    assert.equal(stub.requests.length, 1);
+    assert.equal(stub.requests[0].url, '/v3/search');
   });
 });
 
