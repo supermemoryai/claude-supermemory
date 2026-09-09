@@ -401,6 +401,30 @@ describe('session-start hook', () => {
   });
 });
 
+describe('entity context', () => {
+  test('marks few-shot examples so extractors do not store them as facts (issue #111)', () => {
+    const { AGENT_ENTITY_CONTEXT } = require(join(HOOKS_DIR, 'lib', 'api.js'));
+    // Server validates entityContext at 1500 chars and rejects longer values
+    // with HTTP 400, dropping the ingest entirely.
+    assert.ok(AGENT_ENTITY_CONTEXT.length <= 1500);
+    assert.match(AGENT_ENTITY_CONTEXT, /<examples note="another project, never extract">/);
+    assert.match(AGENT_ENTITY_CONTEXT, /<\/examples>/);
+    assert.match(
+      AGENT_ENTITY_CONTEXT,
+      /<\/guidance> The document follows\. Extract only from it\./,
+    );
+    // The turborepo / Drizzle quotes must sit inside the examples block, not
+    // as bare EXTRACT bullets the model can lift as facts about this repo.
+    const examplesBlock = AGENT_ENTITY_CONTEXT.match(
+      /<examples note="another project, never extract">([\s\S]*?)<\/examples>/,
+    );
+    assert.ok(examplesBlock);
+    assert.match(examplesBlock[1], /monorepo with turborepo/);
+    assert.match(examplesBlock[1], /chose Drizzle over Prisma/);
+    assert.match(AGENT_ENTITY_CONTEXT, /remember things that a human would remember/);
+  });
+});
+
 describe('capture hook', () => {
   test('saves the transcript delta with scope metadata and entity context', async (t) => {
     const { repo, home } = makeRepo(t);
@@ -447,6 +471,7 @@ describe('capture hook', () => {
     assert.equal(body.metadata.sm_scope, 'personal');
     assert.equal(body.customId, 'sess-2');
     assert.match(body.entityContext, /EXTRACT/);
+    assert.match(body.entityContext, /<examples note="another project, never extract">/);
 
     const state = readState('sess-2', {
       dataDir: join(home, '.supermemory-claude', 'statusline'),
