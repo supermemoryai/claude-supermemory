@@ -206,6 +206,8 @@ describe('recall-directive hook', () => {
     assert.match(context, /- ◪ Migration plan — Use expand-contract migrations/);
     assert.doesNotMatch(context, /irrelevant low-similarity hit/);
     assert.match(context, /repo_example_project__/);
+    assert.match(context, /defaults to this project's container/);
+    assert.doesNotMatch(context, /omit containerTag to search the account/i);
     assert.match(plain(output.systemMessage), /^◪ supermemory · recalled \d+ memories \(\d+ tok\)$/);
     assert.equal(stub.requests[0].url, '/v4/profile');
     assert.equal(
