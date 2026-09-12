@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Bump patch version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          npm version patch --no-git-tag-version
+          VERSION="$(node -p "require('./package.json').version")"
+          node -e '
+            const fs = require("fs");
+            const version = require("./package.json").version;
+            for (const file of ["plugin/.claude-plugin/plugin.json", "latest.json"]) {
+              const next = fs.readFileSync(file, "utf8").replace(
+                /"version":\s*"[^"]+"/,
+                `"version": "${version}"`,
+              );
+              fs.writeFileSync(file, next);
+            }
+          '
+          git add package.json package-lock.json plugin/.claude-plugin/plugin.json latest.json
+          git commit -m "chore(release): ${VERSION}"
+
+      - name: Push version bump
+        run: git push origin HEAD:main
