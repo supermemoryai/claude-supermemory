@@ -1,8 +1,4 @@
 #!/usr/bin/env node
-// Bridges Claude Code's stdio MCP transport to the hosted Supermemory MCP
-// server, authenticating with the same credentials file the hooks use — one
-// browser login covers both. Messages are forwarded sequentially to preserve
-// JSON-RPC ordering; SSE responses are unwrapped back into stdout lines.
 const readline = require('node:readline');
 const { getContainerTag } = require('./lib/container-tag');
 const { getApiKey } = require('./lib/settings');
@@ -11,10 +7,6 @@ const MCP_URL =
   process.env.SUPERMEMORY_MCP_URL || 'https://mcp.supermemory.ai/mcp';
 const REQUEST_TIMEOUT_MS = 30000;
 
-// Hosted MCP treats a missing containerTag as the user's durable activeSpace,
-// which is shared across every MCP client and is not this repo. Hooks already
-// read/write the repo tag; inject it on space-scoped tools so MCP hits the
-// same container. Leave an explicit containerTag and set-active-tag alone.
 const REPO_SCOPED_TOOLS = new Set([
   'search_memory',
   'add_memory',
@@ -27,6 +19,7 @@ const REPO_SCOPED_TOOLS = new Set([
 
 let sessionId = null;
 
+// Hosted MCP omits to activeSpace; default space-scoped calls to this repo instead.
 function injectRepoContainerTag(message, containerTag) {
   if (!containerTag || message.method !== 'tools/call') return;
   const params = message.params;
