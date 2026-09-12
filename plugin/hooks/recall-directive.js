@@ -74,6 +74,50 @@ function readSeenHashes(sessionDir) {
   }
 }
 
+// The hook can only inject what it finds. When a project has no stored memories
+// the model gets silence — and silence reads as "there is nothing to search",
+// so it never reaches for the tool and any history living in another container
+// stays invisible. Say once per session that the tool exists, what to scope it
+// to, and that the call is free. Once per session, because this fires on a miss
+// and misses are the common case in an empty project: repeating it would tax
+// every prompt and invite a search on turns where memory is irrelevant.
+const DISCOVERY_MARKER = 'discovery.json';
+
+function discoverySent(sessionDir) {
+  return fs.existsSync(path.join(sessionDir, DISCOVERY_MARKER));
+}
+
+function markDiscoverySent(sessionDir) {
+  try {
+    atomicWriteJson(path.join(sessionDir, DISCOVERY_MARKER), {
+      sentAt: new Date().toISOString(),
+    });
+  } catch {
+    // Best effort: a failed marker only risks repeating the notice.
+  }
+}
+
+// The tool is exposed under three names depending on install shape (see
+// TOOL_NAME_RE in recall-approve.js), and under deferred tool loading the
+// model holds a bare name with no schema — so point at the lookup, not at one
+// hardcoded name.
+function formatDiscovery(containerTag) {
+  return `<supermemory-recall>
+No stored memories matched this prompt for this project.
+
+Deeper history may still exist. Search it with the supermemory search_memory
+tool — exposed as mcp__…supermemory__search_memory; if its schema is not
+loaded, resolve the exact name with ToolSearch("+supermemory search_memory").
+
+- Scope to this project with containerTag: "${containerTag}"
+- Omit containerTag to search the account's active/shared space instead.
+- Read-only supermemory calls are auto-approved; they never prompt the user.
+
+Worth a call when the user refers to past decisions, earlier sessions, or says
+"remember" / "we decided" / "last time". Skip it for self-contained tasks.
+</supermemory-recall>`;
+}
+
 function formatRecall(results, containerTag) {
   const lines = results.map((r) => {
     const text = resultText(r).replace(/\s+/g, ' ').slice(0, MAX_RESULT_CHARS);
@@ -158,6 +202,20 @@ async function main() {
     });
 
     if (fresh.length === 0) {
+      // Only when the container is genuinely empty: if results came back but
+      // were all repeats, formatRecall already delivered the same guidance
+      // earlier this session.
+      if (results.length === 0 && sessionDir && !discoverySent(sessionDir)) {
+        markDiscoverySent(sessionDir);
+        writeOutput({
+          systemMessage: `${BRAND} ${gray('·')} no memories yet for this project`,
+          hookSpecificOutput: {
+            hookEventName: 'UserPromptSubmit',
+            additionalContext: formatDiscovery(containerTag),
+          },
+        });
+        return;
+      }
       writeOutput({ continue: true, suppressOutput: true });
       return;
     }
