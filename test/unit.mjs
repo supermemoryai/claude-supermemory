@@ -497,10 +497,11 @@ describe('capture hook', () => {
 });
 
 describe('mcp proxy', () => {
-  function runProxy(t, env, lines) {
+  function runProxy(t, env, lines, options = {}) {
     return new Promise((resolve, reject) => {
       const child = spawn('node', [join(HOOKS_DIR, 'mcp-proxy.js')], {
         env: { ...process.env, ...env },
+        cwd: options.cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let stdout = '';
@@ -569,6 +570,104 @@ describe('mcp proxy', () => {
     );
     assert.equal(messages[0].error.code, -32001);
     assert.match(messages[0].error.message, /not authenticated/);
+  });
+
+  test('injects the repo container tag when MCP tools omit it', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const expected = readTags(repo, home).tag;
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      const { id } = JSON.parse(record.body);
+      res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { ok: true } }));
+    });
+
+    await runProxy(
+      t,
+      {
+        HOME: home,
+        USERPROFILE: home,
+        SUPERMEMORY_CC_API_KEY: 'sm_test_key_0123456789abcdef',
+        SUPERMEMORY_MCP_URL: `${stub.url}/mcp`,
+      },
+      [
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'search_memory', arguments: { query: 'auth' } },
+        },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'add_memory', arguments: { content: 'remember this' } },
+        },
+        {
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'listDocuments' },
+        },
+      ],
+      { cwd: repo },
+    );
+
+    const forwarded = stub.requests.map((r) => JSON.parse(r.body));
+    assert.equal(forwarded[0].params.arguments.containerTag, expected);
+    assert.equal(forwarded[0].params.arguments.query, 'auth');
+    assert.equal(forwarded[1].params.arguments.containerTag, expected);
+    assert.equal(forwarded[2].params.arguments.containerTag, expected);
+  });
+
+  test('keeps an explicit containerTag and does not rewrite unrelated tools', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      const { id } = JSON.parse(record.body);
+      res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { ok: true } }));
+    });
+
+    await runProxy(
+      t,
+      {
+        HOME: home,
+        USERPROFILE: home,
+        SUPERMEMORY_CC_API_KEY: 'sm_test_key_0123456789abcdef',
+        SUPERMEMORY_MCP_URL: `${stub.url}/mcp`,
+      },
+      [
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'search_memory',
+            arguments: { query: 'auth', containerTag: 'other_space' },
+          },
+        },
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/call',
+          params: { name: 'set-active-tag', arguments: { containerTag: 'picked' } },
+        },
+        {
+          jsonrpc: '2.0',
+          id: 3,
+          method: 'tools/call',
+          params: { name: 'whoAmI' },
+        },
+        { jsonrpc: '2.0', id: 4, method: 'tools/list' },
+      ],
+      { cwd: repo },
+    );
+
+    const forwarded = stub.requests.map((r) => JSON.parse(r.body));
+    assert.equal(forwarded[0].params.arguments.containerTag, 'other_space');
+    assert.equal(forwarded[1].params.arguments.containerTag, 'picked');
+    assert.equal(forwarded[2].params.arguments, undefined);
+    assert.equal(forwarded[3].method, 'tools/list');
+    assert.equal(forwarded[3].params, undefined);
   });
 });
 
