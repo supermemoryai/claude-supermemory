@@ -1,7 +1,7 @@
 {
   "name": "supermemory",
   "displayName": "Supermemory",
-  "version": "0.1.7",
+  "version": "0.1.6",
   "description": "Persistent memory across Claude Code sessions using Supermemory",
   "author": {
     "name": "Supermemory",
