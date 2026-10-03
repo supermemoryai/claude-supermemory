@@ -1,5 +1,3 @@
-// Banner colors for hook systemMessages, using the statusline's palette.
-// NO_COLOR (https://no-color.org) disables them.
 const enabled = !process.env.NO_COLOR;
 const wrap = (code) => (s) => (enabled ? `\x1b[${code}m${s}\x1b[0m` : s);
 

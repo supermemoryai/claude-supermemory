@@ -19,7 +19,7 @@ const {
   getSessionDir,
   readState,
   writeState,
-} = require('./lib/statusline-state');
+} = require('./lib/session-state');
 const { readStdin, writeOutput } = require('./lib/stdin');
 
 // Recall is performed HERE, not delegated to the model: the hook searches
@@ -49,10 +49,6 @@ function resultText(r) {
   return text || null;
 }
 
-// A memory injected once this session stays in the conversation, so
-// re-injecting it wastes context and makes the banner repeat the same
-// number every turn. The seen set lives next to the statusline state and
-// is pruned with it.
 function hashText(text) {
   return crypto
     .createHash('sha256')
@@ -187,7 +183,7 @@ async function main() {
     const repeats = results.length - fresh.length;
 
     if (input.session_id) {
-      const prev = readState(input.session_id).search || {};
+      const prev = readState(input.session_id, 'search') || {};
       writeState(input.session_id, 'search', {
         results: fresh.length,
         count: (prev.count || 0) + 1,

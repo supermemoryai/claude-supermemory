@@ -131,10 +131,10 @@ const html = `<!doctype html>
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const kb = n => n < 1024 ? n + ' b' : (n / 1024).toFixed(1) + ' kb';
 const HOOK_NOTES = {
-  SessionStart: 'profile fetch → context + "N memories loaded" + welcome-back; auth bootstrap; statusline symlink upkeep',
+  SessionStart: 'profile fetch → context + "N memories loaded" + welcome-back; auth bootstrap; legacy status line cleanup',
   UserPromptSubmit: 'injects recall directive with active container tag (local, no network)',
   PreToolUse: 'auto-approves read-only supermemory MCP tools + "recalling: <query>" message',
-  Stop: 'captures transcript delta with entityContext; writes statusline state',
+  Stop: 'captures transcript delta with entityContext',
 };
 fetch('/api/inspect').then(r => r.json()).then(d => {
   document.getElementById('meta').textContent = 'v' + d.manifest.version + ' \\u00b7 ' + d.git.branch + ' \\u00b7 ' + d.git.commit;

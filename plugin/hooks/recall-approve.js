@@ -1,6 +1,6 @@
 const { BRAND, gray } = require('./lib/colors');
 const { loadSettings, debugLog } = require('./lib/settings');
-const { readState, writeState } = require('./lib/statusline-state');
+const { readState, writeState } = require('./lib/session-state');
 const { readStdin, writeOutput } = require('./lib/stdin');
 
 // Supermemory MCP tool names arrive as mcp__supermemory__<tool> (direct
@@ -33,7 +33,7 @@ async function main() {
           ? input.tool_input.query
           : null;
       if (tool === 'search_memory') {
-        const prev = readState(input.session_id).search || {};
+        const prev = readState(input.session_id, 'search') || {};
         writeState(input.session_id, 'search', {
           results: 0,
           count: (prev.count || 0) + 1,
