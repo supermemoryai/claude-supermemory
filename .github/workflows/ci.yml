@@ -6,7 +6,7 @@ on:
 jobs:
   quality-checks:
     name: Lint & Test
-    runs-on: ubuntu-latest
+    runs-on: "peak-ubuntu-24.04-4"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

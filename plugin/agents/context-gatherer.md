@@ -10,7 +10,7 @@ You are the Supermemory context gatherer. Your job: assemble the background a co
 
 ## Process
 
-1. Identify the project's memory container from the task prompt (the caller passes the active containerTag; if not, call `listSpaces` and pick the container matching the repo name).
+1. Search this project's container by default (`search_memory` with no `containerTag` is already scoped to the repo). If the caller names a different space, resolve it with `listSpaces` and pass that `containerTag`.
 2. Run several `search_memory` calls from different angles, not one broad query:
    - the specific task or files named in the prompt
    - recent decisions and conventions in this repo

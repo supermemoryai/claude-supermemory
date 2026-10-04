@@ -1,6 +1,7 @@
+const crypto = require('node:crypto');
 const fs = require('node:fs');
-const path = require('node:path');
 const os = require('node:os');
+const path = require('node:path');
 const { getProfile } = require('./lib/api');
 const { getContainerTag, getProjectName } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
@@ -15,82 +16,52 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
-const {
-  pruneState,
-  resolveStatuslineDataDir,
-  writeState,
-} = require('./lib/statusline-state');
+const { pruneState, writeState } = require('./lib/session-state');
 
-const STATUSLINE_LINK = path.join(
-  os.homedir(),
-  '.supermemory-claude',
-  'statusline-current',
-);
-const STATUSLINE_TIP_FILE = path.join(
-  os.homedir(),
-  '.supermemory-claude',
-  'statusline-tip-shown',
-);
 const STATUSLINE_INSTALLED_FILE = path.join(
   os.homedir(),
   '.supermemory-claude',
   'statusline-installed',
 );
-const STATUSLINE_ENTRY = {
-  type: 'command',
-  command: 'node ~/.supermemory-claude/statusline-current',
-  refreshInterval: 1,
-};
-
-// The statusline setting needs one path that survives plugin updates; a
-// symlink re-pointed each session is that path — no code is ever copied.
-function refreshStatuslineLink() {
-  const target = path.join(__dirname, '..', 'statusline.js');
-  try {
-    fs.mkdirSync(path.dirname(STATUSLINE_LINK), { recursive: true });
-    try {
-      if (fs.readlinkSync(STATUSLINE_LINK) === target) return;
-      fs.unlinkSync(STATUSLINE_LINK);
-    } catch {}
-    fs.symlinkSync(target, STATUSLINE_LINK);
-  } catch {}
-}
-
-// Installs the statusline into ~/.claude/settings.json on first run. The
-// sentinel file records that we installed once, so a user who deletes the
-// entry is never fought; a foreign statusLine is never overwritten.
-function installStatusline() {
+// Only the old install marker plus the exact entry it wrote proves ownership.
+function removeLegacyStatusline() {
+  if (!fs.existsSync(STATUSLINE_INSTALLED_FILE)) return null;
   const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
   try {
-    let settings = {};
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch (err) {
-      if (err.code !== 'ENOENT') {
-        return `${MARK} statusline not installed — ~/.claude/settings.json is unreadable: ${err.message}`;
+    const stat = fs.lstatSync(settingsPath);
+    if (!stat.isFile()) return null;
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const entry = settings?.statusLine;
+    if (
+      entry &&
+      !Array.isArray(entry) &&
+      Object.keys(entry).length === 3 &&
+      entry.type === 'command' &&
+      entry.command === 'node ~/.supermemory-claude/statusline-current' &&
+      entry.refreshInterval === 1
+    ) {
+      delete settings.statusLine;
+      const tmp = path.join(
+        path.dirname(settingsPath),
+        `.settings.supermemory-${crypto.randomUUID()}.tmp`,
+      );
+      try {
+        fs.writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`, {
+          flag: 'wx',
+          mode: stat.mode & 0o777,
+        });
+        fs.renameSync(tmp, settingsPath);
+      } finally {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {}
       }
     }
-    if (
-      JSON.stringify(settings.statusLine || '').includes('statusline-current')
-    ) {
-      return null;
-    }
-    if (settings.statusLine) {
-      if (fs.existsSync(STATUSLINE_TIP_FILE)) return null;
-      fs.mkdirSync(path.dirname(STATUSLINE_TIP_FILE), { recursive: true });
-      fs.writeFileSync(STATUSLINE_TIP_FILE, new Date().toISOString());
-      return `${MARK} Supermemory status line available — you already have a "statusLine" in ~/.claude/settings.json; replace it with ${JSON.stringify(STATUSLINE_ENTRY)} to switch.`;
-    }
-    if (fs.existsSync(STATUSLINE_INSTALLED_FILE)) return null;
-    settings.statusLine = STATUSLINE_ENTRY;
-    const tmp = `${settingsPath}.supermemory-tmp`;
-    fs.writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`);
-    fs.renameSync(tmp, settingsPath);
-    fs.mkdirSync(path.dirname(STATUSLINE_INSTALLED_FILE), { recursive: true });
-    fs.writeFileSync(STATUSLINE_INSTALLED_FILE, new Date().toISOString());
-    return `${MARK} statusline installed — it appears the next time Claude Code starts (delete "statusLine" from ~/.claude/settings.json to turn it off).`;
+    fs.unlinkSync(STATUSLINE_INSTALLED_FILE);
+    return null;
   } catch (err) {
-    return `${MARK} statusline install failed: ${err.message}`;
+    if (err.code === 'ENOENT') return null;
+    return `${MARK} could not finish removing the old Supermemory status line: ${err.message}`;
   }
 }
 
@@ -105,7 +76,7 @@ function markTip() {
     if (fs.existsSync(MARK_TIP_FILE)) return null;
     fs.mkdirSync(path.dirname(MARK_TIP_FILE), { recursive: true });
     fs.writeFileSync(MARK_TIP_FILE, new Date().toISOString());
-    return `${MARK} is the supermemory mark — whenever you see it (statusline, notices, Claude's answers), that information came from supermemory.`;
+    return `${MARK} is the supermemory mark — whenever you see it (notices or Claude's answers), that information came from supermemory.`;
   } catch {
     return null;
   }
@@ -170,8 +141,8 @@ async function main() {
     sessionId = input.session_id;
     const cwd = input.cwd || process.cwd();
 
-    refreshStatuslineLink();
-    pruneState({ dataDir: resolveStatuslineDataDir() });
+    const statuslineCleanupNotice = removeLegacyStatusline();
+    pruneState();
     writeState(sessionId, 'context', { status: 'loading', memoryItemsLoaded: 0 });
 
     const projectConfig = loadProjectConfig(cwd);
@@ -249,7 +220,7 @@ Memories will be saved as you work.
           .filter(Boolean)
           .join(gray(' · ')) || null,
         markTip(),
-        installStatusline(),
+        statuslineCleanupNotice,
       ],
     );
   } catch (err) {

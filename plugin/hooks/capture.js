@@ -20,7 +20,7 @@ const {
 } = require('./lib/transcript');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { saveLastSession } = require('./lib/last-session');
-const { readState, writeState } = require('./lib/statusline-state');
+const { readState, writeState } = require('./lib/session-state');
 
 async function main() {
   const settings = loadSettings();
@@ -59,7 +59,7 @@ async function main() {
     const baseUrl = getBaseUrl(cwd, projectConfig);
     const containerTag = getContainerTag(cwd);
 
-    const captured = readState(sessionId).capture?.count || 0;
+    const captured = readState(sessionId, 'capture')?.count || 0;
     writeState(sessionId, 'capture', { status: 'saving', count: captured });
 
     const result = await addMemory(

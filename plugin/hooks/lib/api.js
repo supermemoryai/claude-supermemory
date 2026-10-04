@@ -21,8 +21,8 @@ SKIP:
 - Granular details that do not help future work`;
 
 // Hooks sit between the user and Claude — a slow or dead network must never
-// hold the session hostage, so every request is capped hard at 3s and callers
-// treat failure as "no memory this time", not a blocker.
+// hold the session hostage. Requests default to 3s; prompt recall allows 4s.
+// Callers treat failure as "no memory this time", not a blocker.
 const REQUEST_TIMEOUT_MS = 3000;
 
 async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {

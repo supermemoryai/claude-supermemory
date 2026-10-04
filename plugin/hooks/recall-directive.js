@@ -19,7 +19,7 @@ const {
   getSessionDir,
   readState,
   writeState,
-} = require('./lib/statusline-state');
+} = require('./lib/session-state');
 const { readStdin, writeOutput } = require('./lib/stdin');
 
 // Recall is performed HERE, not delegated to the model: the hook searches
@@ -31,7 +31,7 @@ const MAX_QUERY_LENGTH = 500;
 const MAX_RESULTS = 5;
 const MAX_RESULT_CHARS = 300;
 const MIN_SIMILARITY = 0.55;
-const SEARCH_TIMEOUT_MS = 3000;
+const SEARCH_TIMEOUT_MS = 4000;
 const MAX_SEEN_HASHES = 500;
 
 function shouldSkip(prompt) {
@@ -49,10 +49,6 @@ function resultText(r) {
   return text || null;
 }
 
-// A memory injected once this session stays in the conversation, so
-// re-injecting it wastes context and makes the banner repeat the same
-// number every turn. The seen set lives next to the statusline state and
-// is pruned with it.
 function hashText(text) {
   return crypto
     .createHash('sha256')
@@ -74,6 +70,50 @@ function readSeenHashes(sessionDir) {
   }
 }
 
+// The hook can only inject what it finds. When a project has no stored memories
+// the model gets silence — and silence reads as "there is nothing to search",
+// so it never reaches for the tool and any history living in another container
+// stays invisible. Say once per session that the tool exists, what to scope it
+// to, and that the call is free. Once per session, because this fires on a miss
+// and misses are the common case in an empty project: repeating it would tax
+// every prompt and invite a search on turns where memory is irrelevant.
+const DISCOVERY_MARKER = 'discovery.json';
+
+function discoverySent(sessionDir) {
+  return fs.existsSync(path.join(sessionDir, DISCOVERY_MARKER));
+}
+
+function markDiscoverySent(sessionDir) {
+  try {
+    atomicWriteJson(path.join(sessionDir, DISCOVERY_MARKER), {
+      sentAt: new Date().toISOString(),
+    });
+  } catch {
+    // Best effort: a failed marker only risks repeating the notice.
+  }
+}
+
+// The tool is exposed under three names depending on install shape (see
+// TOOL_NAME_RE in recall-approve.js), and under deferred tool loading the
+// model holds a bare name with no schema — so point at the lookup, not at one
+// hardcoded name.
+function formatDiscovery(containerTag) {
+  return `<supermemory-recall>
+No stored memories matched this prompt for this project.
+
+Deeper history may still exist. Search it with the supermemory search_memory
+tool — exposed as mcp__…supermemory__search_memory; if its schema is not
+loaded, resolve the exact name with ToolSearch("+supermemory search_memory").
+
+- Scope to this project with containerTag: "${containerTag}"
+- Omit containerTag to search the account's active/shared space instead.
+- Read-only supermemory calls are auto-approved; they never prompt the user.
+
+Worth a call when the user refers to past decisions, earlier sessions, or says
+"remember" / "we decided" / "last time". Skip it for self-contained tasks.
+</supermemory-recall>`;
+}
+
 function formatRecall(results, containerTag) {
   const lines = results.map((r) => {
     const text = resultText(r).replace(/\s+/g, ' ').slice(0, MAX_RESULT_CHARS);
@@ -85,7 +125,7 @@ function formatRecall(results, containerTag) {
 ◪ Recalled from supermemory for this prompt (relevance-ranked):
 ${lines.join('\n')}
 
-When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool (containerTag: "${containerTag}") or launch the context-gatherer agent.
+When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool — it defaults to this project's container (${containerTag}). Pass containerTag only to search a different space. Or launch the context-gatherer agent.
 </supermemory-recall>`;
 }
 
@@ -143,7 +183,7 @@ async function main() {
     const repeats = results.length - fresh.length;
 
     if (input.session_id) {
-      const prev = readState(input.session_id).search || {};
+      const prev = readState(input.session_id, 'search') || {};
       writeState(input.session_id, 'search', {
         results: fresh.length,
         count: (prev.count || 0) + 1,
@@ -158,6 +198,20 @@ async function main() {
     });
 
     if (fresh.length === 0) {
+      // Only when the container is genuinely empty: if results came back but
+      // were all repeats, formatRecall already delivered the same guidance
+      // earlier this session.
+      if (results.length === 0 && sessionDir && !discoverySent(sessionDir)) {
+        markDiscoverySent(sessionDir);
+        writeOutput({
+          systemMessage: `${BRAND} ${gray('·')} no memories yet for this project`,
+          hookSpecificOutput: {
+            hookEventName: 'UserPromptSubmit',
+            additionalContext: formatDiscovery(containerTag),
+          },
+        });
+        return;
+      }
       writeOutput({ continue: true, suppressOutput: true });
       return;
     }
@@ -188,6 +242,11 @@ async function main() {
     });
   } catch (err) {
     debugLog(settings, 'Recall directive error', { error: err.message });
+    // A slow recall should not interrupt every prompt with an error banner.
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      writeOutput({ continue: true, suppressOutput: true });
+      return;
+    }
     writeOutput({
       systemMessage: `${BRAND} ${gray('·')} ${red(`recall failed: ${getUserFriendlyError(err).slice(0, 80)}`)}`,
       continue: true,

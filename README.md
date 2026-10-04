@@ -67,6 +67,10 @@ Then, only if you still have the old plugin installed, remove it:
 | 🧭 **Deep multi-container search**<br>The `context-gatherer` subagent fans out several searches across a project's containers and returns a synthesized brief. | ⚙️ **Project config**<br>Per-repo settings, API keys, and container tag overrides via `.claude/.supermemory-claude/config.json`. |
 | 📟 **Live statusline**<br>An animated statusline (installed automatically, opt-out any time) shows recall and capture activity as it happens. | 👋 **Welcome-back notices**<br>Returning to a project after 6+ hours shows a one-line reminder of when you last worked here. |
 
+- **Recall strip** — On Claude Code 2.1.287+ in the terminal, press the changing memory headline above the prompt to browse the full returned facts one at a time
+
+On Claude Code 2.1.250, local marketplace install/update and the `SessionStart` and `UserPromptSubmit` command hooks were verified, but `claude plugin validate` rejects the recall mod's `classic.SessionStart` event. The strip is not available on that version; other older versions and install sources have not been verified.
+
 ## How it works
 
 Claude Code supports hooks and MCP servers. `supermemory` registers four hooks, in lifecycle order:
