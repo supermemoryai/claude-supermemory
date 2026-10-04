@@ -63,9 +63,9 @@ Then, only if you still have the old plugin installed, remove it:
 |  |  |
 | --- | --- |
 | 🧠 **Direct recall**<br>Every substantive prompt is searched against Supermemory by the hook itself before Claude sees it, and fresh matches are injected automatically. No permission prompt, no tool call spent. | 🔎 **Hosted MCP tools**<br>`search_memory`, `listSpaces`, `whoAmI`, and more are available through the same credentials as the hooks, auto-approved when read-only. |
-| 💾 **Auto capture**<br>Conversations are saved automatically when a session ends. | 🏷️ **Team memory**<br>Project knowledge shared across your team, separate from personal memories, via `sm_scope` metadata. |
+| 💾 **Auto capture**<br>When a session ends, the conversation is saved in the background as decisions and lessons, not git status. | 🏷️ **Team memory**<br>Captures go in the repo container shared with Codex and OpenCode. Automatic capture is tagged `sm_scope: personal`; this plugin does not write a project scope. |
 | 🧭 **Deep multi-container search**<br>The `context-gatherer` subagent fans out several searches across a project's containers and returns a synthesized brief. | ⚙️ **Project config**<br>Per-repo settings, API keys, and container tag overrides via `.claude/.supermemory-claude/config.json`. |
-| 📟 **Live statusline**<br>An animated statusline (installed automatically, opt-out any time) shows recall and capture activity as it happens. | 👋 **Welcome-back notices**<br>Returning to a project after 6+ hours shows a one-line reminder of when you last worked here. |
+| 🗂️ **Codebase index**<br>`/supermemory:index` saves architecture, conventions, and how to run into this project's container. | 👋 **Welcome-back notices**<br>Returning to a project after 6+ hours shows a one-line reminder of when you last worked here. |
 
 - **Recall strip** — On Claude Code 2.1.287+ in the terminal, press the changing memory headline above the prompt to browse the full returned facts one at a time
 
@@ -79,7 +79,7 @@ Claude Code supports hooks and MCP servers. `supermemory` registers four hooks, 
 
 | Step | Hook | Event | What it does |
 | --- | --- | --- | --- |
-| 1 | `session-start` | `SessionStart` | Bootstraps auth, installs the statusline on first run, and loads profile context plus a welcome-back notice. |
+| 1 | `session-start` | `SessionStart` | Bootstraps auth and loads profile context plus a welcome-back notice. It does not install a statusline; an old auto-installed one is removed. |
 | 2 | `recall-directive` | `UserPromptSubmit` | Searches Supermemory directly with the prompt and injects fresh matches, deduplicated within the session. |
 | 3 | `recall-approve` | `PreToolUse` | Auto-allows read-only Supermemory MCP tools; writes still ask for permission. |
 | 4 | `capture` | `Stop` | Saves the completed conversation delta in the background. |
@@ -91,6 +91,7 @@ tells Claude when it should decide to search on its own.
 
 The hooks are tolerant: if Supermemory is unreachable, the API key is missing, or
 anything else fails, they exit cleanly without breaking your Claude Code session.
+A capture that fails is reported the next time a session starts.
 
 ### Shared Agents memory
 
@@ -99,7 +100,7 @@ repository, so new memories are shared:
 
 ```
 repo_<project-name>__<remote-hash>   stores automatic capture and every explicit save
-sm_scope                             metadata keeping personal and project memories filterable
+sm_scope: personal                   written on automatic capture; filters personal from project memories
 ```
 
 The hash is derived from the normalized Git remote, so clones share memory while
@@ -122,7 +123,7 @@ unified tag above, generated fresh or overridden via `repoContainerTag` /
 | `SUPERMEMORY_API_URL` | Override the Supermemory API base URL. |
 | `SUPERMEMORY_MCP_URL` | Override the hosted MCP endpoint (default `https://mcp.supermemory.ai/mcp`). |
 | `SUPERMEMORY_AUTH_URL` | Override the browser-auth base URL. |
-| `SUPERMEMORY_REPO_TAG` | Explicit project-container override, checked before the project config value. |
+| `SUPERMEMORY_REPO_TAG` | Project-container override, used only when project config has no `repoContainerTag`. |
 | `SUPERMEMORY_ISOLATE_WORKTREES` | Set to `true` to key the project container on the worktree path instead of the Git remote. |
 | `SUPERMEMORY_DEBUG` | Set to `true` to enable debug logging. |
 
@@ -141,7 +142,6 @@ unified tag above, generated fresh or overridden via `repoContainerTag` /
 | Option | Description |
 | --- | --- |
 | `maxProfileItems` | Max memories in context (default: 5). |
-| `injectProfile` | Whether to fetch and inject the user profile (default: true). |
 | `recallDirective` | Set to switch prompt recall from direct hook search to an advisory instruction Claude reasons over. |
 | `signalExtraction` | Only capture important turns (default: false). |
 | `signalKeywords` | Keywords that trigger capture. |
@@ -166,18 +166,19 @@ Per-repo overrides, created manually or via the settings your team shares:
 | --- | --- |
 | `apiKey` | Project-specific API key. |
 | `baseUrl` | Supermemory API URL. |
-| `personalContainerTag` | Legacy personal container retained for reads. |
-| `repoContainerTag` | Override the unified project container tag. |
+| `repoContainerTag` | Override the unified project container tag. Checked before `SUPERMEMORY_REPO_TAG`. |
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
+| `/supermemory:index` | Index this repo's architecture, conventions, and how to run into the project container. |
 | `/supermemory:status` | Show authentication status, API and MCP reachability, and the active project container. |
 
-Search and save no longer go through dedicated commands: recall happens automatically on
-every prompt, deeper multi-container search runs through the `context-gatherer` agent or
-the MCP tools directly, and saving happens automatically when a session ends.
+Search does not have its own command. Recall runs on every substantive prompt, and
+deeper multi-container search goes through the `context-gatherer` agent or the MCP
+tools. `/supermemory:index` is the explicit save for codebase structure. Conversation
+turns are saved when a session ends.
 
 ## Privacy
 
@@ -191,5 +192,5 @@ MIT
 ---
 
 <div align="center">
-<sub>◪ is the supermemory mark. Whenever you see it (statusline, notices, Claude's answers), that information came from supermemory.</sub>
+<sub>◪ is the supermemory mark. Whenever you see it (the recall strip, notices, or Claude's answers), that information came from supermemory.</sub>
 </div>
