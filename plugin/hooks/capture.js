@@ -20,8 +20,16 @@ const {
 } = require('./lib/transcript');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { saveLastSession } = require('./lib/last-session');
-const { readState, writeState } = require('./lib/session-state');
+const {
+  clearCaptureNotice,
+  readState,
+  writeCaptureNotice,
+  writeState,
+} = require('./lib/session-state');
 
+const CAPTURE_TIMEOUT_MS = 25000;
+
+// Stop allows 30s; this write outlives the 3s default without slowing SessionStart.
 async function main() {
   const settings = loadSettings();
   let sessionId;
@@ -75,11 +83,16 @@ async function main() {
         sm_capture_mode: 'automatic',
         timestamp: new Date().toISOString(),
       },
-      { customId: sessionId, entityContext: AGENT_ENTITY_CONTEXT },
+      {
+        customId: sessionId,
+        entityContext: AGENT_ENTITY_CONTEXT,
+        timeoutMs: CAPTURE_TIMEOUT_MS,
+      },
     );
 
     setLastCapturedUuid(sessionId, delta.lastUuid);
     writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
+    clearCaptureNotice();
 
     if (result?.id) {
       try {
@@ -93,6 +106,7 @@ async function main() {
     const friendly = getUserFriendlyError(err);
     debugLog(settings, 'Capture error', { error: friendly });
     console.error(`Supermemory: ${friendly}`);
+    writeCaptureNotice(friendly);
     writeState(sessionId, 'capture', { status: 'error' });
     writeOutput({ continue: true });
   }

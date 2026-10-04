@@ -16,7 +16,7 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
-const { pruneState, writeState } = require('./lib/session-state');
+const { pruneState, readCaptureNotice, writeState } = require('./lib/session-state');
 
 const STATUSLINE_INSTALLED_FILE = path.join(
   os.homedir(),
@@ -121,6 +121,16 @@ ${sections.join('\n\n')}
 </supermemory-context>`;
 }
 
+// Stop is async and exits 0, so a failed save only reaches the user here.
+function captureFailureNotice() {
+  const message = readCaptureNotice()?.message;
+  if (!message) return null;
+  return {
+    systemMessage: `${MARK} session save failed — ${message}`,
+    status: `Session save failed: ${message}`,
+  };
+}
+
 function output(additionalContext, systemMessageParts) {
   const systemMessage = systemMessageParts.filter(Boolean).join('\n');
   writeOutput({
@@ -165,7 +175,7 @@ ${authErr.message === 'AUTH_TIMEOUT' ? 'Authentication timed out. Please complet
 If the browser did not open, visit: ${AUTH_BASE_URL}
 Or set the SUPERMEMORY_CC_API_KEY environment variable.
 </supermemory-status>`,
-          [],
+          [captureFailureNotice()?.systemMessage],
         );
         return;
       }
@@ -204,8 +214,12 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
         ? `${BRAND} ${gray('·')} ${loaded} ${loaded === 1 ? 'memory' : 'memories'} loaded for ${bold(projectName)}`
         : null;
 
+    const captureNotice = captureFailureNotice();
     output(
       (apiError ? `<supermemory-status>\n${apiError}\n</supermemory-status>\n` : '') +
+        (captureNotice
+          ? `<supermemory-status>\n${captureNotice.status}\n</supermemory-status>\n`
+          : '') +
         (context ||
           (apiError
             ? `<supermemory-context>
@@ -216,6 +230,7 @@ No previous memories found for this project (container: ${containerTag}).
 Memories will be saved as you work.
 </supermemory-context>`)),
       [
+        captureNotice?.systemMessage,
         [memoryNotice, welcomeBackNotice(containerTag)]
           .filter(Boolean)
           .join(gray(' · ')) || null,
@@ -232,7 +247,7 @@ Memories will be saved as you work.
 Failed to load memories: ${friendly}
 Session will continue without memory context.
 </supermemory-status>`,
-      [],
+      [captureFailureNotice()?.systemMessage],
     );
   }
 }

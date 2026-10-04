@@ -1,17 +1,4 @@
-/**
- * Shared error utilities for mapping Supermemory SDK errors to user-friendly messages.
- *
- * The SDK (`supermemory` v4.x) attaches a numeric `.status` property to all
- * APIError instances, so we rely on that rather than `instanceof` checks to
- * avoid bundling / import-path issues.
- */
-
-/**
- * Map an SDK error (or any Error) to a concise, actionable message.
- *
- * @param {Error & { status?: number }} err
- * @returns {string}
- */
+// Numeric status is the stable field; error classes differ across SDK builds.
 function getUserFriendlyError(err) {
   const status = err?.status;
 
@@ -27,6 +14,9 @@ function getUserFriendlyError(err) {
   }
   if (status === 401) {
     return 'Authentication failed \u2014 your API key may be expired or revoked. Re-authenticate with the supermemory login command or check https://console.supermemory.ai';
+  }
+  if (status === 402) {
+    return 'Out of credits \u2014 top up at https://console.supermemory.ai to continue saving.';
   }
   if (status === 403) {
     return 'Permission denied \u2014 this feature may require a different Supermemory plan. Check https://supermemory.ai/pricing';

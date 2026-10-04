@@ -53,9 +53,14 @@ function parseTranscript(transcriptPath) {
   return entries;
 }
 
+// A missing tracker is a pre-install session; the whole history must not be uploaded.
 function getEntriesSinceLastCapture(entries, lastCapturedUuid) {
   if (!lastCapturedUuid) {
-    return entries.filter((e) => e.type === 'user' || e.type === 'assistant');
+    const conversational = entries.filter(
+      (e) => e.type === 'user' || e.type === 'assistant',
+    );
+    const turns = groupEntriesIntoTurns(conversational);
+    return turns.length > 0 ? turns[turns.length - 1].allEntries : [];
   }
 
   let foundLast = false;

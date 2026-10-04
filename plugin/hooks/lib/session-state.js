@@ -136,10 +136,47 @@ function pruneState() {
   } catch {}
 }
 
+function captureNoticePath() {
+  return path.join(os.homedir(), '.supermemory-claude', 'capture-notice.json');
+}
+
+function writeCaptureNotice(message) {
+  const text = String(message || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+  if (!text) return false;
+  try {
+    atomicWriteJson(captureNoticePath(), { message: text });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readCaptureNotice() {
+  try {
+    const record = JSON.parse(fs.readFileSync(captureNoticePath(), 'utf8'));
+    if (typeof record?.message !== 'string' || !record.message.trim()) return null;
+    return { message: record.message.trim() };
+  } catch {
+    return null;
+  }
+}
+
+function clearCaptureNotice() {
+  try {
+    fs.unlinkSync(captureNoticePath());
+  } catch {}
+}
+
 module.exports = {
   atomicWriteJson,
+  clearCaptureNotice,
   getSessionDir,
   pruneState,
+  readCaptureNotice,
   readState,
+  writeCaptureNotice,
   writeState,
 };
