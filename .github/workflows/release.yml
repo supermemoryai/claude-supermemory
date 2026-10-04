@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   bump:
@@ -20,7 +21,22 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Skip a push that already contains a release
+        id: gate
+        run: |
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git log --format=%s "${{ github.event.before }}..${{ github.event.after }}" | grep -q '^chore(release):'; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Bump patch version
+        if: steps.gate.outputs.skip != 'true'
+        id: bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -39,6 +55,22 @@ jobs:
           '
           git add package.json package-lock.json plugin/.claude-plugin/plugin.json latest.json
           git commit -m "chore(release): ${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Push version bump
-        run: git push origin HEAD:main
+      - name: Open release pull request
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          branch="chore/release-${VERSION}"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+            echo "Release branch ${branch} already exists"
+            exit 0
+          fi
+          git push origin "HEAD:${branch}"
+          gh pr create \
+            --base main \
+            --head "$branch" \
+            --title "chore(release): ${VERSION}" \
+            --body "Align package, plugin, and update-notice versions to ${VERSION}. main requires a pull request, so this workflow can no longer push the bump directly."
