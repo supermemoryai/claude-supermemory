@@ -1,4 +1,4 @@
 {
-  "version": "0.1.8",
+  "version": "0.1.9",
   "updateCommand": "claude plugin update supermemory@supermemory-plugins"
 }
