@@ -28,7 +28,7 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if git log --format=%s "${{ github.event.before }}..${{ github.event.after }}" | grep -q '^chore(release):'; then
+          if git log --format=%B "${{ github.event.before }}..${{ github.event.after }}" | grep -q 'chore(release):'; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -69,8 +69,9 @@ jobs:
             exit 0
           fi
           git push origin "HEAD:${branch}"
-          gh pr create \
-            --base main \
-            --head "$branch" \
-            --title "chore(release): ${VERSION}" \
-            --body "Align package, plugin, and update-notice versions to ${VERSION}. main requires a pull request, so this workflow can no longer push the bump directly."
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls" \
+            -d "{\"title\":\"chore(release): ${VERSION}\",\"head\":\"${branch}\",\"base\":\"main\",\"body\":\"Align package, plugin, and update-notice versions to ${VERSION}. main requires a pull request, so this workflow can no longer push the bump directly.\"}"
