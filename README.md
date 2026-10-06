@@ -7,8 +7,6 @@
 [![version](https://img.shields.io/github/package-json/v/supermemoryai/claude-supermemory/main?filename=plugin%2F.claude-plugin%2Fplugin.json&label=version&color=9C5C10)](https://github.com/supermemoryai/claude-supermemory)
 [![license](https://img.shields.io/badge/license-MIT-9C5C10)](#license)
 
-<img width="4000" height="2130" alt="claude-supermemory in action" src="https://github.com/user-attachments/assets/07e63ac4-b67d-457b-9029-1dc5d860e920" />
-
 </div>
 
 A Claude Code plugin that gives your agent persistent memory across sessions using
@@ -62,10 +60,10 @@ Then, only if you still have the old plugin installed, remove it:
 
 |  |  |
 | --- | --- |
-| 🧠 **Direct recall**<br>Every substantive prompt is searched against Supermemory by the hook itself before Claude sees it, and fresh matches are injected automatically. No permission prompt, no tool call spent. | 🔎 **Hosted MCP tools**<br>`search_memory`, `listSpaces`, `whoAmI`, and more are available through the same credentials as the hooks, auto-approved when read-only. |
-| 💾 **Auto capture**<br>When a session ends, the conversation is saved in the background as decisions and lessons, not git status. | 🏷️ **Team memory**<br>Captures go in the repo container shared with Codex and OpenCode. Automatic capture is tagged `sm_scope: personal`; this plugin does not write a project scope. |
+| 🧠 **Direct recall**<br>When authenticated, the hook searches substantive prompts before Claude sees them and injects fresh matches. No permission prompt or MCP tool call. | 🔎 **Hosted MCP tools**<br>`search_memory`, `listSpaces`, `whoAmI`, and more are available through the same credentials as the hooks, auto-approved when read-only. |
+| 💾 **Auto capture**<br>At the end of a session, the Stop hook saves new conversation content in the background. It asks Supermemory to retain durable context rather than transient Git state. | 🏷️ **Shared repo memory**<br>Automatic captures use the repository container shared with Codex and OpenCode and carry `sm_scope: personal` metadata. |
 | 🧭 **Deep multi-container search**<br>The `context-gatherer` subagent fans out several searches across a project's containers and returns a synthesized brief. | ⚙️ **Project config**<br>Per-repo settings, API keys, and container tag overrides via `.claude/.supermemory-claude/config.json`. |
-| 🗂️ **Codebase index**<br>`/supermemory:index` saves architecture, conventions, and how to run into this project's container. | 👋 **Welcome-back notices**<br>Returning to a project after 6+ hours shows a one-line reminder of when you last worked here. |
+| 🗂️ **Codebase index**<br>`/supermemory:index` saves architecture, conventions, and how to run into this project's container. | 👋 **Session context**<br>Loads profile facts at session start and shows a welcome-back notice when you return to a project after 6+ hours. |
 
 - **Recall strip** — On Claude Code 2.1.287+ in the terminal, press the changing memory headline above the prompt to browse the full returned facts one at a time
 
@@ -84,8 +82,8 @@ Claude Code supports hooks and MCP servers. `supermemory` registers four hooks, 
 | 3 | `recall-approve` | `PreToolUse` | Auto-allows read-only Supermemory MCP tools; writes still ask for permission. |
 | 4 | `capture` | `Stop` | Saves the completed conversation delta in the background. |
 
-By default, recall is performed by the hook itself, not delegated to the model, so it runs
-on every substantive prompt instead of only when Claude chooses to spend a tool call.
+By default, recall is performed by the hook itself, not delegated to the model. It searches
+substantive prompts when authenticated, without waiting for Claude to choose a tool call.
 Setting `recallDirective` switches to advisory mode: the hook stops searching and instead
 tells Claude when it should decide to search on its own.
 
@@ -98,9 +96,9 @@ A capture that fails is reported the next time a session starts.
 Claude Code, Codex, and OpenCode all generate the same container tag for a given
 repository, so new memories are shared:
 
-```
-repo_<project-name>__<remote-hash>   stores automatic capture and every explicit save
-sm_scope: personal                   written on automatic capture; filters personal from project memories
+```text
+repo_<project-name>__<remote-hash>   default container for capture and MCP memory tools
+sm_scope: personal                   metadata on automatic captures
 ```
 
 The hash is derived from the normalized Git remote, so clones share memory while
@@ -175,10 +173,12 @@ Per-repo overrides, created manually or via the settings your team shares:
 | `/supermemory:index` | Index this repo's architecture, conventions, and how to run into the project container. |
 | `/supermemory:status` | Show authentication status, API and MCP reachability, and the active project container. |
 
-Search does not have its own command. Recall runs on every substantive prompt, and
-deeper multi-container search goes through the `context-gatherer` agent or the MCP
-tools. `/supermemory:index` is the explicit save for codebase structure. Conversation
-turns are saved when a session ends.
+Search does not have its own command. With a key, the prompt hook searches
+substantive prompts. For deeper history, use the `context-gatherer` agent or
+the MCP tools. `/supermemory:index` saves codebase structure. For a one-off
+save, ask Claude to use the `add_memory` MCP tool. Without `containerTag`,
+the proxy defaults it to this repository's container; pass a different tag
+to select another space. Conversation turns are saved when a session ends.
 
 ## Privacy
 
