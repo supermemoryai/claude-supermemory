@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const { createHash, randomUUID } = require('node:crypto');
+const { atomicWriteJson } = require('./session-state');
 const {
   getIncludeTools,
   shouldIncludeTool,
@@ -19,19 +21,128 @@ function ensureTrackerDir() {
   }
 }
 
-function getLastCapturedUuid(sessionId) {
+function readCaptureTracker(sessionId) {
   ensureTrackerDir();
+  try {
+    const state = JSON.parse(
+      fs.readFileSync(path.join(TRACKER_DIR, `${sessionId}.json`), 'utf8'),
+    );
+    if (
+      typeof state.lastUuid === 'string' &&
+      Array.isArray(state.pendingReplies)
+    ) {
+      return {
+        lastUuid: state.lastUuid,
+        pendingReplies: state.pendingReplies.filter(
+          (reply) =>
+            typeof reply?.afterUuid === 'string' &&
+            typeof reply.hash === 'string',
+        ),
+      };
+    }
+  } catch {}
   const trackerFile = path.join(TRACKER_DIR, `${sessionId}.txt`);
-  if (fs.existsSync(trackerFile)) {
-    return fs.readFileSync(trackerFile, 'utf-8').trim();
-  }
-  return null;
+  const lastUuid = fs.existsSync(trackerFile)
+    ? fs.readFileSync(trackerFile, 'utf8').trim()
+    : null;
+  return { lastUuid, pendingReplies: [] };
 }
 
-function setLastCapturedUuid(sessionId, uuid) {
+function getLastCapturedUuid(sessionId) {
+  return readCaptureTracker(sessionId).lastUuid;
+}
+
+function setLastCapturedUuid(sessionId, uuid, pendingReplies = []) {
   ensureTrackerDir();
   const trackerFile = path.join(TRACKER_DIR, `${sessionId}.txt`);
-  fs.writeFileSync(trackerFile, uuid);
+  atomicWriteJson(path.join(TRACKER_DIR, `${sessionId}.json`), {
+    lastUuid: uuid,
+    pendingReplies,
+  });
+  const temporary = path.join(
+    TRACKER_DIR,
+    `.${sessionId}.txt.${process.pid}.${randomUUID()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(temporary, uuid, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    fs.renameSync(temporary, trackerFile);
+  } catch {} finally {
+    try {
+      fs.unlinkSync(temporary);
+    } catch {}
+  }
+}
+
+function getAssistantReplyText(entry) {
+  const content = entry?.message?.content;
+  if (typeof content === 'string') return cleanContent(content);
+  if (!Array.isArray(content)) return '';
+  if (content.some((block) => block.type === 'tool_use')) return '';
+  return content
+    .filter((block) => block.type === 'text')
+    .map((block) => cleanContent(block.text))
+    .join('\n');
+}
+
+function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
+  const entries = parseTranscript(transcriptPath);
+  const tracker = readCaptureTracker(sessionId);
+  const lastCapturedUuid = tracker.lastUuid;
+  let pendingReplies = tracker.pendingReplies;
+
+  const replyHash = (text) => createHash('sha256').update(text).digest('hex');
+  const capturedUuids = new Set();
+  pendingReplies = pendingReplies.filter((reply) => {
+    const anchor = reply.afterUuid
+      ? entries.findIndex((entry) => entry.uuid === reply.afterUuid)
+      : -1;
+    if (reply.afterUuid && anchor === -1) return true;
+    const candidates = entries.slice(anchor + 1);
+    for (const entry of candidates) {
+      if (reply.afterUuid && entry.type === 'user' && hasTextContent(entry))
+        break;
+      if (
+        entry.type === 'assistant' &&
+        replyHash(getAssistantReplyText(entry)) === reply.hash
+      ) {
+        capturedUuids.add(entry.uuid);
+        return false;
+      }
+    }
+    return true;
+  });
+
+  const newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
+  const lastUuid = newEntries.at(-1)?.uuid || lastCapturedUuid || '';
+  const conversational = entries.filter(
+    (entry) => entry.type === 'user' || entry.type === 'assistant',
+  );
+  const lastEntry = conversational.at(-1);
+  const finalText = cleanContent(lastAssistantMessage);
+  const alreadyFlushed =
+    lastEntry?.type === 'assistant' &&
+    getAssistantReplyText(lastEntry) === finalText;
+  const alreadyCaptured = pendingReplies.some(
+    (reply) =>
+      reply.afterUuid === lastUuid && reply.hash === replyHash(finalText),
+  );
+  const uncapturedEntries = newEntries.filter(
+    (entry) => !capturedUuids.has(entry.uuid),
+  );
+
+  if (finalText && !alreadyFlushed && !alreadyCaptured) {
+    uncapturedEntries.push({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: lastAssistantMessage }] },
+    });
+    pendingReplies.push({ afterUuid: lastUuid, hash: replyHash(finalText) });
+  }
+
+  return { newEntries: uncapturedEntries, lastUuid, pendingReplies };
 }
 
 function parseTranscript(transcriptPath) {
@@ -395,18 +506,23 @@ function formatAssistantMessageTextOnly(message) {
   return parts.length > 0 ? parts.join('\n') : null;
 }
 
-function formatSignalEntries(transcriptPath, sessionId, cwd) {
+function formatSignalEntries(
+  transcriptPath,
+  sessionId,
+  cwd,
+  lastAssistantMessage,
+) {
   toolUseMap = new Map();
   currentIncludeList = getIncludeTools(cwd);
 
   const signalConfig = getSignalConfig(cwd);
   const { keywords, turnsBefore } = signalConfig;
 
-  const entries = parseTranscript(transcriptPath);
-  if (entries.length === 0) return null;
-
-  const lastCapturedUuid = getLastCapturedUuid(sessionId);
-  const newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
+  const { newEntries, lastUuid, pendingReplies } = prepareCapture(
+    transcriptPath,
+    sessionId,
+    lastAssistantMessage,
+  );
 
   if (newEntries.length === 0) return null;
 
@@ -436,7 +552,6 @@ function formatSignalEntries(transcriptPath, sessionId, cwd) {
   if (allEntriesToFormat.length === 0) return null;
 
   const firstEntry = allEntriesToFormat[0];
-  const lastEntry = newEntries[newEntries.length - 1];
   const timestamp = firstEntry.timestamp || new Date().toISOString();
 
   const formattedParts = [];
@@ -456,25 +571,27 @@ function formatSignalEntries(transcriptPath, sessionId, cwd) {
 
   if (result.length < 100) return null;
 
-  // The caller advances the cursor only after the save succeeds — advancing
-  // here would silently drop this delta whenever the API call fails.
-  return { formatted: result, lastUuid: lastEntry.uuid };
+  return { formatted: result, lastUuid, pendingReplies };
 }
 
-function formatNewEntries(transcriptPath, sessionId, cwd) {
+function formatNewEntries(
+  transcriptPath,
+  sessionId,
+  cwd,
+  lastAssistantMessage,
+) {
   toolUseMap = new Map();
   currentIncludeList = getIncludeTools(cwd);
 
-  const entries = parseTranscript(transcriptPath);
-  if (entries.length === 0) return null;
-
-  const lastCapturedUuid = getLastCapturedUuid(sessionId);
-  const newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
+  const { newEntries, lastUuid, pendingReplies } = prepareCapture(
+    transcriptPath,
+    sessionId,
+    lastAssistantMessage,
+  );
 
   if (newEntries.length === 0) return null;
 
   const firstEntry = newEntries[0];
-  const lastEntry = newEntries[newEntries.length - 1];
   const timestamp = firstEntry.timestamp || new Date().toISOString();
 
   const formattedParts = [];
@@ -494,9 +611,7 @@ function formatNewEntries(transcriptPath, sessionId, cwd) {
 
   if (result.length < 100) return null;
 
-  // The caller advances the cursor only after the save succeeds — advancing
-  // here would silently drop this delta whenever the API call fails.
-  return { formatted: result, lastUuid: lastEntry.uuid };
+  return { formatted: result, lastUuid, pendingReplies };
 }
 
 module.exports = {

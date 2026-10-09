@@ -55,10 +55,25 @@ async function main() {
     }
 
     const delta = getSignalConfig(cwd).enabled
-      ? formatSignalEntries(transcriptPath, sessionId, cwd)
-      : formatNewEntries(transcriptPath, sessionId, cwd);
+      ? formatSignalEntries(
+          transcriptPath,
+          sessionId,
+          cwd,
+          input.last_assistant_message,
+        )
+      : formatNewEntries(
+          transcriptPath,
+          sessionId,
+          cwd,
+          input.last_assistant_message,
+        );
 
+    const captured = readState(sessionId, 'capture')?.count || 0;
     if (!delta) {
+      writeState(sessionId, 'capture', {
+        status: 'no_content',
+        count: captured,
+      });
       debugLog(settings, 'No new content to save');
       writeOutput({ continue: true });
       return;
@@ -67,7 +82,6 @@ async function main() {
     const baseUrl = getBaseUrl(cwd, projectConfig);
     const containerTag = getContainerTag(cwd);
 
-    const captured = readState(sessionId, 'capture')?.count || 0;
     writeState(sessionId, 'capture', { status: 'saving', count: captured });
 
     const result = await addMemory(
@@ -90,7 +104,7 @@ async function main() {
       },
     );
 
-    setLastCapturedUuid(sessionId, delta.lastUuid);
+    setLastCapturedUuid(sessionId, delta.lastUuid, delta.pendingReplies);
     writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
     clearCaptureNotice();
 
