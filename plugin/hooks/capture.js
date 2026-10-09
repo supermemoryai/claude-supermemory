@@ -70,7 +70,10 @@ async function main() {
 
     const captured = readState(sessionId, 'capture')?.count || 0;
     if (!delta) {
-      writeState(sessionId, 'capture', { status: 'no_content', count: captured });
+      writeState(sessionId, 'capture', {
+        status: 'no_content',
+        count: captured,
+      });
       debugLog(settings, 'No new content to save');
       writeOutput({ continue: true });
       return;

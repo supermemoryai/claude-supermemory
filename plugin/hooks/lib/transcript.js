@@ -21,13 +21,35 @@ function ensureTrackerDir() {
   }
 }
 
-function getLastCapturedUuid(sessionId) {
+function readCaptureTracker(sessionId) {
   ensureTrackerDir();
+  try {
+    const state = JSON.parse(
+      fs.readFileSync(path.join(TRACKER_DIR, `${sessionId}.json`), 'utf8'),
+    );
+    if (
+      typeof state.lastUuid === 'string' &&
+      Array.isArray(state.pendingReplies)
+    ) {
+      return {
+        lastUuid: state.lastUuid,
+        pendingReplies: state.pendingReplies.filter(
+          (reply) =>
+            typeof reply?.afterUuid === 'string' &&
+            typeof reply.hash === 'string',
+        ),
+      };
+    }
+  } catch {}
   const trackerFile = path.join(TRACKER_DIR, `${sessionId}.txt`);
-  if (fs.existsSync(trackerFile)) {
-    return fs.readFileSync(trackerFile, 'utf-8').trim();
-  }
-  return null;
+  const lastUuid = fs.existsSync(trackerFile)
+    ? fs.readFileSync(trackerFile, 'utf8').trim()
+    : null;
+  return { lastUuid, pendingReplies: [] };
+}
+
+function getLastCapturedUuid(sessionId) {
+  return readCaptureTracker(sessionId).lastUuid;
 }
 
 function setLastCapturedUuid(sessionId, uuid, pendingReplies = []) {
@@ -37,7 +59,9 @@ function setLastCapturedUuid(sessionId, uuid, pendingReplies = []) {
     lastUuid: uuid,
     pendingReplies,
   });
-  fs.writeFileSync(trackerFile, uuid);
+  try {
+    fs.writeFileSync(trackerFile, uuid);
+  } catch {}
 }
 
 function getAssistantReplyText(entry) {
@@ -53,23 +77,9 @@ function getAssistantReplyText(entry) {
 
 function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
   const entries = parseTranscript(transcriptPath);
-  const lastCapturedUuid = getLastCapturedUuid(sessionId);
-  let pendingReplies = [];
-  try {
-    const state = JSON.parse(
-      fs.readFileSync(path.join(TRACKER_DIR, `${sessionId}.json`), 'utf8'),
-    );
-    if (
-      state.lastUuid === lastCapturedUuid &&
-      Array.isArray(state.pendingReplies)
-    ) {
-      pendingReplies = state.pendingReplies.filter(
-        (reply) =>
-          typeof reply?.afterUuid === 'string' &&
-          typeof reply.hash === 'string',
-      );
-    }
-  } catch {}
+  const tracker = readCaptureTracker(sessionId);
+  const lastCapturedUuid = tracker.lastUuid;
+  let pendingReplies = tracker.pendingReplies;
 
   const replyHash = (text) => createHash('sha256').update(text).digest('hex');
   const capturedUuids = new Set();
@@ -78,9 +88,7 @@ function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
       ? entries.findIndex((entry) => entry.uuid === reply.afterUuid)
       : -1;
     if (reply.afterUuid && anchor === -1) return true;
-    const candidates = reply.afterUuid
-      ? entries.slice(anchor + 1)
-      : getEntriesSinceLastCapture(entries, null);
+    const candidates = entries.slice(anchor + 1);
     for (const entry of candidates) {
       if (reply.afterUuid && entry.type === 'user' && hasTextContent(entry))
         break;
