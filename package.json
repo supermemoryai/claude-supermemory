@@ -1,10 +1,11 @@
 {
   "name": "claude-supermemory-dev",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Claude code plugin by Supermemory AI",
   "private": true,
   "type": "commonjs",
   "scripts": {
+    "build:sdk": "node scripts/build-sdk.mjs",
     "test": "node --test test/unit.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -14,6 +15,8 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.3.13"
+    "@biomejs/biome": "^2.3.13",
+    "esbuild": "0.25.12",
+    "supermemory": "5.0.1"
   }
 }

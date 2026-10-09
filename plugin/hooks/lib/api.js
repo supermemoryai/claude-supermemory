@@ -1,4 +1,6 @@
-const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository.
+const { resolveApiVersion } = require('./settings');
+
+const AGENT_SUPPORTING_CONTEXT = `Shared coding-agent memory for one software repository.
 
 RULES:
 - Try to remember things that a human would remember — a teammate recalls decisions and lessons, not what state the working tree was in
@@ -20,12 +22,15 @@ SKIP:
 - Transient command output and low-value implementation chatter
 - Granular details that do not help future work`;
 
-// Hooks sit between the user and Claude — a slow or dead network must never
-// hold the session hostage. Requests default to 3s; prompt recall allows 4s.
-// Callers treat failure as "no memory this time", not a blocker.
 const REQUEST_TIMEOUT_MS = 3000;
 
-async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function post(
+  baseUrl,
+  apiKey,
+  path,
+  body,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
     headers: {
@@ -47,19 +52,151 @@ async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS)
   return response.json();
 }
 
-function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
-  return post(baseUrl, apiKey, '/v4/profile', { containerTag, q: query }, options.timeoutMs);
+function useV5(baseUrl, options) {
+  return resolveApiVersion(baseUrl, options.apiVersion) === 'v5';
 }
 
-function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {}) {
+function sdkClient(baseUrl, apiKey, options) {
+  const { Supermemory } = require('../vendor/supermemory.cjs');
+  return new Supermemory({
+    apiKey,
+    baseUrl: baseUrl.replace(/\/+$/, ''),
+    headers: { 'x-sm-source': 'claude-code' },
+    timeoutInSeconds: (options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000,
+    maxRetries: 0,
+  });
+}
+
+function sdkOptions(options) {
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  return {
+    timeoutInSeconds: timeoutMs / 1000,
+    maxRetries: 0,
+    abortSignal: AbortSignal.timeout(timeoutMs),
+  };
+}
+
+async function getProfile(baseUrl, apiKey, namespace, query, options = {}) {
+  if (!useV5(baseUrl, options)) {
+    return post(
+      baseUrl,
+      apiKey,
+      '/v4/profile',
+      { containerTag: namespace, q: query },
+      options.timeoutMs,
+    );
+  }
+  const response = await sdkClient(baseUrl, apiKey, options).profile(
+    namespace,
+    {},
+    sdkOptions(options),
+  );
+  if (
+    !Array.isArray(response?.profile?.static) ||
+    !Array.isArray(response?.profile?.dynamic)
+  ) {
+    throw new Error('Supermemory returned an invalid profile response.');
+  }
+  return response;
+}
+
+async function searchMemories(baseUrl, apiKey, namespace, query, options = {}) {
+  if (!useV5(baseUrl, options)) {
+    const response = await getProfile(
+      baseUrl,
+      apiKey,
+      namespace,
+      query,
+      options,
+    );
+    return response?.searchResults?.results || [];
+  }
+  const response = await sdkClient(baseUrl, apiKey, options).search(
+    namespace,
+    {
+      query,
+      searchMode: 'memories',
+      threshold: 0.55,
+      limit: 5,
+      rerank: 'none',
+      rewriteQuery: false,
+    },
+    sdkOptions(options),
+  );
+  if (!Array.isArray(response?.results)) {
+    throw new Error('Supermemory returned an invalid search response.');
+  }
+  return response.results;
+}
+
+async function addMemory(
+  baseUrl,
+  apiKey,
+  content,
+  namespace,
+  metadata,
+  options = {},
+) {
+  if (useV5(baseUrl, options)) {
+    const result = await sdkClient(baseUrl, apiKey, options).add(
+      namespace,
+      {
+        content,
+        id: options.id ?? options.customId,
+        supportingContext: options.supportingContext ?? options.entityContext,
+        metadata: { sm_source: 'claude-code', ...metadata },
+        taskType: 'memory',
+        dreaming: 'dynamic',
+      },
+      sdkOptions(options),
+    );
+    if (
+      typeof result?.id !== 'string' ||
+      !result.id ||
+      ![
+        'unknown',
+        'queued',
+        'extracting',
+        'chunking',
+        'embedding',
+        'indexing',
+        'done',
+      ].includes(result.status)
+    ) {
+      throw new Error(
+        'Supermemory did not confirm document acceptance; capture cursor retained.',
+      );
+    }
+    return result;
+  }
   const body = {
     content,
-    containerTag,
+    containerTag: namespace,
     metadata: { sm_source: 'claude-code', ...metadata },
   };
-  if (options.customId) body.customId = options.customId;
-  if (options.entityContext) body.entityContext = options.entityContext;
-  return post(baseUrl, apiKey, '/v3/documents', body, options.timeoutMs);
+  if (options.id ?? options.customId)
+    body.customId = options.id ?? options.customId;
+  if (options.supportingContext ?? options.entityContext)
+    body.entityContext = options.supportingContext ?? options.entityContext;
+  const result = await post(
+    baseUrl,
+    apiKey,
+    '/v3/documents',
+    body,
+    options.timeoutMs,
+  );
+  if (typeof result?.id !== 'string' || !result.id) {
+    throw new Error(
+      'Supermemory did not confirm document acceptance; capture cursor retained.',
+    );
+  }
+  return result;
 }
 
-module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory };
+module.exports = {
+  AGENT_SUPPORTING_CONTEXT,
+  AGENT_ENTITY_CONTEXT: AGENT_SUPPORTING_CONTEXT,
+  getProfile,
+  searchMemories,
+  addMemory,
+};

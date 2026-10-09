@@ -41,7 +41,10 @@ function loadSettings() {
   const settings = { ...DEFAULT_SETTINGS };
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
-      Object.assign(settings, JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8')));
+      Object.assign(
+        settings,
+        JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8')),
+      );
     }
   } catch (err) {
     console.error(`Settings: Failed to load ${SETTINGS_FILE}: ${err.message}`);
@@ -85,6 +88,24 @@ function getBaseUrl(cwd, projectConfig) {
     throw new Error('Invalid baseUrl: expected an absolute http(s) URL');
   }
   return normalized;
+}
+
+function resolveApiVersion(baseUrl, configured) {
+  if (configured !== undefined && configured !== '') {
+    if (configured !== 'v5' && configured !== 'legacy') {
+      throw new Error('Invalid apiVersion: expected "v5" or "legacy"');
+    }
+    return configured;
+  }
+  return baseUrl.replace(/\/+$/, '') === BASE_URL ? 'v5' : 'legacy';
+}
+
+function getApiVersion(cwd, projectConfig) {
+  projectConfig = projectConfig || loadProjectConfig(cwd || process.cwd());
+  return resolveApiVersion(
+    getBaseUrl(cwd, projectConfig),
+    process.env.SUPERMEMORY_API_VERSION || projectConfig?.apiVersion,
+  );
 }
 
 function debugLog(settings, message, data) {
@@ -143,7 +164,8 @@ function getRecallConfig(cwd) {
   const settings = loadSettings();
   const projectConfig = loadProjectConfig(cwd || process.cwd());
   return {
-    directive: projectConfig?.recallDirective || settings.recallDirective || null,
+    directive:
+      projectConfig?.recallDirective || settings.recallDirective || null,
   };
 }
 
@@ -154,6 +176,8 @@ module.exports = {
   loadSettings,
   getApiKey,
   getBaseUrl,
+  getApiVersion,
+  resolveApiVersion,
   debugLog,
   getIncludeTools,
   shouldIncludeTool,
