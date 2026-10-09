@@ -65,7 +65,7 @@ function writeState(sessionId, event, data = {}) {
     };
   } else if (event === 'capture') {
     fields = {
-      status: ['saving', 'saved', 'error'].includes(data.status)
+      status: ['saving', 'saved', 'error', 'no_content'].includes(data.status)
         ? data.status
         : 'error',
       count: normalizeCount(data.count),

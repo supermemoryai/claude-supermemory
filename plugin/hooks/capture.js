@@ -68,7 +68,9 @@ async function main() {
           input.last_assistant_message,
         );
 
+    const captured = readState(sessionId, 'capture')?.count || 0;
     if (!delta) {
+      writeState(sessionId, 'capture', { status: 'no_content', count: captured });
       debugLog(settings, 'No new content to save');
       writeOutput({ continue: true });
       return;
@@ -77,7 +79,6 @@ async function main() {
     const baseUrl = getBaseUrl(cwd, projectConfig);
     const containerTag = getContainerTag(cwd);
 
-    const captured = readState(sessionId, 'capture')?.count || 0;
     writeState(sessionId, 'capture', { status: 'saving', count: captured });
 
     const result = await addMemory(
