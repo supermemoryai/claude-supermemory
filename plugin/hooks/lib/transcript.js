@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { createHash } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { atomicWriteJson } = require('./session-state');
 const {
   getIncludeTools,
@@ -59,9 +59,22 @@ function setLastCapturedUuid(sessionId, uuid, pendingReplies = []) {
     lastUuid: uuid,
     pendingReplies,
   });
+  const temporary = path.join(
+    TRACKER_DIR,
+    `.${sessionId}.txt.${process.pid}.${randomUUID()}.tmp`,
+  );
   try {
-    fs.writeFileSync(trackerFile, uuid);
-  } catch {}
+    fs.writeFileSync(temporary, uuid, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    fs.renameSync(temporary, trackerFile);
+  } catch {} finally {
+    try {
+      fs.unlinkSync(temporary);
+    } catch {}
+  }
 }
 
 function getAssistantReplyText(entry) {
