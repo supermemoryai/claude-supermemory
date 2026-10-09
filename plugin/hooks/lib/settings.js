@@ -97,7 +97,15 @@ function resolveApiVersion(baseUrl, configured) {
     }
     return configured;
   }
-  return baseUrl.replace(/\/+$/, '') === BASE_URL ? 'v5' : 'legacy';
+  const url = new URL(baseUrl);
+  const hosted =
+    url.origin === BASE_URL &&
+    !url.pathname.replace(/\/+$/, '') &&
+    !url.search &&
+    !url.hash &&
+    !url.username &&
+    !url.password;
+  return hosted ? 'v5' : 'legacy';
 }
 
 function getApiVersion(cwd, projectConfig) {
