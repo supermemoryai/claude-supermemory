@@ -55,8 +55,18 @@ async function main() {
     }
 
     const delta = getSignalConfig(cwd).enabled
-      ? formatSignalEntries(transcriptPath, sessionId, cwd)
-      : formatNewEntries(transcriptPath, sessionId, cwd);
+      ? formatSignalEntries(
+          transcriptPath,
+          sessionId,
+          cwd,
+          input.last_assistant_message,
+        )
+      : formatNewEntries(
+          transcriptPath,
+          sessionId,
+          cwd,
+          input.last_assistant_message,
+        );
 
     if (!delta) {
       debugLog(settings, 'No new content to save');
@@ -90,7 +100,7 @@ async function main() {
       },
     );
 
-    setLastCapturedUuid(sessionId, delta.lastUuid);
+    setLastCapturedUuid(sessionId, delta.lastUuid, delta.pendingReplies);
     writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
     clearCaptureNotice();
 

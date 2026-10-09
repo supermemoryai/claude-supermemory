@@ -3,7 +3,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  appendFileSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -404,6 +406,348 @@ describe('session-start hook', () => {
 });
 
 describe('capture hook', () => {
+  test('captures an unflushed final reply from a tool-only tail without backfilling history', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const transcript = join(repo, 'session.jsonl');
+    const reply =
+      'Finished the long agentic turn: the router now preserves project identity across worktrees.';
+    const entries = [
+      {
+        type: 'user',
+        uuid: 'old-user',
+        message: { content: 'Historical private prompt' },
+      },
+      {
+        type: 'assistant',
+        uuid: 'old-answer',
+        message: {
+          content: [{ type: 'text', text: 'Historical private answer' }],
+        },
+      },
+      {
+        type: 'user',
+        uuid: 'tool-result',
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-1',
+              content: 'Excluded tool output',
+            },
+          ],
+        },
+      },
+    ];
+    writeFileSync(transcript, entries.map(JSON.stringify).join('\n'));
+    const stub = await startStubServer(t, (_record, res) =>
+      res.end(JSON.stringify({ id: 'doc-flush' })),
+    );
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_CC_API_KEY: 'sm_test_key',
+      SUPERMEMORY_API_URL: stub.url,
+    };
+    const input = {
+      session_id: 'sess-flush',
+      cwd: repo,
+      transcript_path: transcript,
+      last_assistant_message: reply,
+    };
+
+    assert.equal((await runHook('capture.js', input, env)).code, 0);
+    assert.equal(stub.requests.length, 1);
+    const content = JSON.parse(stub.requests[0].body).content;
+    assert.ok(content.includes(reply));
+    assert.doesNotMatch(content, /Historical private|Excluded tool output/);
+    const tracker = join(
+      home,
+      '.supermemory-claude',
+      'trackers',
+      'sess-flush.txt',
+    );
+    assert.equal(readFileSync(tracker, 'utf8'), 'tool-result');
+    assert.doesNotMatch(
+      readFileSync(tracker.replace('.txt', '.json'), 'utf8'),
+      /Finished the long/,
+    );
+
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+    appendFileSync(
+      transcript,
+      `\n${JSON.stringify({ type: 'assistant', uuid: 'final-1', message: { content: [{ type: 'text', text: reply }] } })}`,
+    );
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+
+    appendFileSync(
+      transcript,
+      `\n${JSON.stringify({ type: 'user', uuid: 'user-2', message: { content: 'Please repeat the same final reply for this new turn.' } })}`,
+    );
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 2);
+    assert.ok(JSON.parse(stub.requests[1].body).content.includes(reply));
+    assert.equal(readFileSync(tracker, 'utf8'), 'user-2');
+    appendFileSync(
+      transcript,
+      `\n${JSON.stringify({ type: 'assistant', uuid: 'final-2', message: { content: [{ type: 'text', text: reply }] } })}`,
+    );
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 2);
+  });
+
+  test('does not duplicate an already-flushed reply and keeps legacy UUID trackers readable', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const trackerDir = join(home, '.supermemory-claude', 'trackers');
+    mkdirSync(trackerDir, { recursive: true });
+    writeFileSync(join(trackerDir, 'sess-legacy.txt'), 'user-1');
+    const reply =
+      'The implementation is complete.\nThe final reply is already flushed to the transcript.';
+    const transcript = join(repo, 'session.jsonl');
+    writeFileSync(
+      transcript,
+      [
+        {
+          type: 'user',
+          uuid: 'user-1',
+          message: { content: 'Please implement this.' },
+        },
+        {
+          type: 'assistant',
+          uuid: 'final-1',
+          message: {
+            content: reply.split('\n').map((text) => ({ type: 'text', text })),
+          },
+        },
+      ]
+        .map(JSON.stringify)
+        .join('\n'),
+    );
+    const stub = await startStubServer(t, (_record, res) =>
+      res.end(JSON.stringify({ id: 'doc-legacy' })),
+    );
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_CC_API_KEY: 'sm_test_key',
+      SUPERMEMORY_API_URL: stub.url,
+    };
+    const input = {
+      session_id: 'sess-legacy',
+      cwd: repo,
+      transcript_path: transcript,
+      last_assistant_message: reply,
+    };
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+    assert.equal(
+      JSON.parse(stub.requests[0].body).content.split(
+        'The implementation is complete.',
+      ).length - 1,
+      1,
+    );
+    assert.equal(
+      readFileSync(join(trackerDir, 'sess-legacy.txt'), 'utf8'),
+      'final-1',
+    );
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+  });
+
+  test('failed fallback saves do not write a tracker and remain retryable after the reply flushes', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const transcript = join(repo, 'session.jsonl');
+    const reply =
+      'Remember: the final assistant answer must be retained even when the transcript file lags.';
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'user-1',
+        message: { content: 'Remember this implementation decision.' },
+      }),
+    );
+    let failing = true;
+    const stub = await startStubServer(t, (_record, res) => {
+      res.statusCode = failing ? 500 : 200;
+      res.end(
+        JSON.stringify(failing ? { error: 'boom' } : { id: 'doc-retry' }),
+      );
+    });
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_CC_API_KEY: 'sm_test_key',
+      SUPERMEMORY_API_URL: stub.url,
+    };
+    const input = {
+      session_id: 'sess-flush-retry',
+      cwd: repo,
+      transcript_path: transcript,
+      last_assistant_message: reply,
+    };
+    await runHook('capture.js', input, env);
+    const trackerDir = join(home, '.supermemory-claude', 'trackers');
+    assert.equal(existsSync(join(trackerDir, 'sess-flush-retry.txt')), false);
+    assert.equal(existsSync(join(trackerDir, 'sess-flush-retry.json')), false);
+    appendFileSync(
+      transcript,
+      `\n${JSON.stringify({ type: 'assistant', uuid: 'final-1', message: { content: [{ type: 'text', text: reply }] } })}`,
+    );
+    failing = false;
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 2);
+    assert.ok(JSON.parse(stub.requests[1].body).content.includes(reply));
+    assert.equal(
+      readFileSync(join(trackerDir, 'sess-flush-retry.txt'), 'utf8'),
+      'final-1',
+    );
+  });
+
+  test('signal capture uses the Stop reply without changing keyword selection', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'settings.json'),
+      JSON.stringify({ signalExtraction: true }),
+    );
+    const transcript = join(repo, 'session.jsonl');
+    const reply =
+      'We chose the focused implementation and preserved the existing tool inclusion policy.';
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'user-1',
+        message: {
+          content: 'Remember the implementation decision for this project.',
+        },
+      }),
+    );
+    const stub = await startStubServer(t, (_record, res) =>
+      res.end(JSON.stringify({ id: 'doc-signal' })),
+    );
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_CC_API_KEY: 'sm_test_key',
+      SUPERMEMORY_API_URL: stub.url,
+    };
+    const input = {
+      session_id: 'sess-signal-flush',
+      cwd: repo,
+      transcript_path: transcript,
+      last_assistant_message: reply,
+    };
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+    assert.ok(JSON.parse(stub.requests[0].body).content.includes(reply));
+    appendFileSync(
+      transcript,
+      `\n${JSON.stringify({ type: 'assistant', uuid: 'final-1', message: { content: [{ type: 'text', text: reply }] } })}\n${JSON.stringify({ type: 'user', uuid: 'user-2', message: { content: 'Hello there.' } })}`,
+    );
+    await runHook(
+      'capture.js',
+      {
+        ...input,
+        last_assistant_message:
+          'Hello again! Nothing to remember for this exchange.',
+      },
+      env,
+    );
+    assert.equal(stub.requests.length, 1);
+  });
+
+  test('deduplicates a reply flushed while the save is in flight, including on legacy hook input', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const transcript = join(repo, 'session.jsonl');
+    const reply =
+      'The final reply finishes while the first upload is in flight, without changing the saved snapshot cursor.';
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'user-1',
+        message: { content: 'Please finish this turn.' },
+      }),
+    );
+    const stub = await startStubServer(t, (_record, res) => {
+      appendFileSync(
+        transcript,
+        `\n${JSON.stringify({ type: 'assistant', uuid: 'final-1', message: { content: [{ type: 'text', text: reply }] } })}`,
+      );
+      res.end(JSON.stringify({ id: 'doc-in-flight' }));
+    });
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_CC_API_KEY: 'sm_test_key',
+      SUPERMEMORY_API_URL: stub.url,
+    };
+    const input = {
+      session_id: 'sess-in-flight',
+      cwd: repo,
+      transcript_path: transcript,
+    };
+    await runHook(
+      'capture.js',
+      { ...input, last_assistant_message: reply },
+      env,
+    );
+    assert.equal(stub.requests.length, 1);
+    assert.equal(
+      readFileSync(
+        join(home, '.supermemory-claude', 'trackers', 'sess-in-flight.txt'),
+        'utf8',
+      ),
+      'user-1',
+    );
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+  });
+
+  test('captures the final reply even before the first transcript line is flushed', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const transcript = join(repo, 'session.jsonl');
+    writeFileSync(transcript, '');
+    const reply =
+      'This final reply is available on Stop even though no transcript entries have reached disk yet.';
+    const stub = await startStubServer(t, (_record, res) =>
+      res.end(JSON.stringify({ id: 'doc-empty' })),
+    );
+    const env = {
+      HOME: home,
+      USERPROFILE: home,
+      SUPERMEMORY_CC_API_KEY: 'sm_test_key',
+      SUPERMEMORY_API_URL: stub.url,
+    };
+    const input = {
+      session_id: 'sess-empty-flush',
+      cwd: repo,
+      transcript_path: transcript,
+      last_assistant_message: reply,
+    };
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+    writeFileSync(
+      transcript,
+      [
+        { type: 'user', uuid: 'user-1', message: { content: 'Hi' } },
+        {
+          type: 'assistant',
+          uuid: 'final-1',
+          message: { content: [{ type: 'text', text: reply }] },
+        },
+      ]
+        .map(JSON.stringify)
+        .join('\n'),
+    );
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+  });
   test('saves the transcript delta with scope metadata and entity context', async (t) => {
     const { repo, home } = makeRepo(t);
     mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
