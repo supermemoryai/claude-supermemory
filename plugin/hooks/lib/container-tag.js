@@ -111,13 +111,19 @@ function getGeneratedContainerTag(cwd) {
   return `repo_${shortName || 'unknown'}__${getProjectIdentity(cwd)}`;
 }
 
-function getContainerTag(cwd) {
+function getNamespace(cwd) {
   const projectConfig = loadProjectConfig(cwd);
   return (
+    projectConfig?.namespace ||
     projectConfig?.repoContainerTag ||
+    process.env.SUPERMEMORY_NAMESPACE ||
     process.env.SUPERMEMORY_REPO_TAG ||
     getGeneratedContainerTag(cwd)
   );
+}
+
+function getContainerTag(cwd) {
+  return getNamespace(cwd);
 }
 
 function getProjectName(cwd) {
@@ -134,6 +140,7 @@ module.exports = {
   getProjectIdentity,
   getGeneratedContainerTag,
   getContainerTag,
+  getNamespace,
   getProjectName,
   sanitizeRepoName,
 };

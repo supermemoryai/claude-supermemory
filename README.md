@@ -95,6 +95,51 @@ The hooks are tolerant: if Supermemory is unreachable, the API key is missing, o
 anything else fails, they exit cleanly without breaking your Claude Code session.
 A capture that fails is reported the next time a session starts.
 
+### API v5 and existing installations
+
+Hosted REST hooks use the official `supermemory` 5.0.1 SDK. SessionStart reads a
+profile; prompt recall makes a separate memory search with explicit mode
+`memories`, threshold `0.55`, limit `5`, no reranking, and no query rewriting.
+The client still enforces the 0.55 floor and top-five cap and renders 300-character
+excerpts. Profiles read `{id, memory}` entries from static and dynamic sections;
+custom buckets don't change the existing UI. Backend score/ranking parity and
+historical data availability haven't been verified against a live service.
+
+Existing custom REST URLs default to `legacy`, keeping v3 writes and v4 profiles
+for self-hosted servers older than 0.0.9. After upgrading the server, explicitly
+set `SUPERMEMORY_API_VERSION=v5` or project `apiVersion: "v5"`. The environment
+setting takes precedence; `legacy` is also an explicit rollback option for a
+server that still supports v3/v4. Invalid values fail closed for memory operations.
+There is no automatic version fallback after a failed request and no fallback to
+the hosted API. REST, MCP, and browser-auth URLs remain separate.
+
+`namespace` is the canonical project-scope name. Precedence is project
+`namespace`, project `repoContainerTag`, `SUPERMEMORY_NAMESPACE`,
+`SUPERMEMORY_REPO_TAG`, then the unchanged generated identity. Old overrides
+remain valid: to rename a setting, copy its **exact value**, not a new identifier.
+The migration guide says existing container tags are valid namespace identifiers;
+the plugin never renames, merges, deletes, or backfills backend data. Changing a
+scope value selects another space, rather than migrating existing memories.
+Credentials and key-source precedence are unchanged: `SUPERMEMORY_CC_API_KEY`,
+project `apiKey`, then `~/.supermemory-claude/credentials.json`.
+
+Capture uses POST with the existing session ID as v5 `id`, which is documented to
+append/diff rather than replace earlier content; extraction instructions become
+`supportingContext` and metadata is retained. It explicitly uses the memory
+pipeline and dynamic processing, which can take minutes to appear in recall.
+SDK automatic retries are disabled for every call. Capture keeps its 25-second
+budget; startup and recall keep their 3/4-second budgets. Only a valid acceptance
+response advances capture's existing atomic JSON/pending/txt cursors. A timeout
+can still mean the server accepted a write without the client receiving its
+acknowledgment; stable IDs don't prove exactly-once billing or processing.
+Original txt recovery, settings, credentials, and last-session files remain
+readable without destructive conversion. Signal/tool/minimum-content behavior
+and the recall mod are unchanged.
+
+MCP is a separate tool protocol: its `containerTag` arguments and custom
+`SUPERMEMORY_MCP_URL` are intentionally retained. Indexing and the context-gatherer
+continue using those MCP tools, not REST document or namespace-management calls.
+
 ### Shared Agents memory
 
 Claude Code, Codex, and OpenCode all generate the same container tag for a given
@@ -112,8 +157,8 @@ path instead of the remote identity.
 
 Unlike Codex, this plugin does not read older per-tool legacy containers
 (`codex_user_*`, `opencode_project_*`, and similar); it only ever uses the single
-unified tag above, generated fresh or overridden via `repoContainerTag` /
-`SUPERMEMORY_REPO_TAG`.
+unified identity above, overridden via `namespace` / `SUPERMEMORY_NAMESPACE`
+or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
 
 ## Configuration
 
@@ -122,10 +167,12 @@ unified tag above, generated fresh or overridden via `repoContainerTag` /
 | Variable | Purpose |
 | --- | --- |
 | `SUPERMEMORY_CC_API_KEY` | Your Supermemory API key (browser auth is preferred). |
-| `SUPERMEMORY_API_URL` | Override the Supermemory API base URL. |
+| `SUPERMEMORY_API_URL` | Override the Supermemory REST base URL; custom URLs default to legacy compatibility. |
+| `SUPERMEMORY_API_VERSION` | `v5` or `legacy`; overrides project `apiVersion`. |
 | `SUPERMEMORY_MCP_URL` | Override the hosted MCP endpoint (default `https://mcp.supermemory.ai/mcp`). |
 | `SUPERMEMORY_AUTH_URL` | Override the browser-auth base URL. |
-| `SUPERMEMORY_REPO_TAG` | Project-container override, used only when project config has no `repoContainerTag`. |
+| `SUPERMEMORY_REPO_TAG` | Legacy project-scope override; used when no project scope or canonical environment override is set. |
+| `SUPERMEMORY_NAMESPACE` | Canonical namespace override; project scope settings take precedence. |
 | `SUPERMEMORY_ISOLATE_WORKTREES` | Set to `true` to key the project container on the worktree path instead of the Git remote. |
 | `SUPERMEMORY_DEBUG` | Set to `true` to enable debug logging. |
 
@@ -159,7 +206,7 @@ Per-repo overrides, created manually or via the settings your team shares:
 {
   "apiKey": "sm_...",
   "baseUrl": "https://api.supermemory.ai",
-  "repoContainerTag": "my-team-project",
+  "namespace": "my-team-project",
   "signalExtraction": true
 }
 ```
@@ -168,6 +215,8 @@ Per-repo overrides, created manually or via the settings your team shares:
 | --- | --- |
 | `apiKey` | Project-specific API key. |
 | `baseUrl` | Supermemory API URL. |
+| `apiVersion` | Explicit `v5` or `legacy`; see the compatibility defaults above. |
+| `namespace` | Canonical project scope, preserving the exact old container-tag value. |
 | `repoContainerTag` | Override the unified project container tag. Checked before `SUPERMEMORY_REPO_TAG`. |
 
 ## Commands
@@ -192,6 +241,14 @@ For information about how Supermemory collects, uses, and retains data, see the
 ## License
 
 MIT
+
+## Development runtime
+
+Marketplace installations need only Node 18 or later, not `npm install`.
+`plugin/hooks/vendor/supermemory.cjs` is the committed runtime bundle built from
+the exact official SDK and esbuild versions in `package-lock.json`. Maintainers
+reproduce it with `npm ci && npm run build:sdk`; CI rejects a stale bundle.
+The SDK's Apache-2.0 license is included alongside the generated bundle.
 
 ---
 
