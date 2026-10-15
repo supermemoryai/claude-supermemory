@@ -25,13 +25,14 @@ SKIP:
 // Callers treat failure as "no memory this time", not a blocker.
 const REQUEST_TIMEOUT_MS = 3000;
 
-async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS, extraHeaders = {}) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       'x-sm-source': 'claude-code',
+      ...extraHeaders,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
@@ -62,4 +63,16 @@ function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {
   return post(baseUrl, apiKey, '/v3/documents', body, options.timeoutMs);
 }
 
-module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory };
+function addSession(baseUrl, apiKey, containerTag, raw, options = {}) {
+  const namespace = encodeURIComponent(containerTag);
+  const metadata = { sm_source: 'claude-code', ...(options.metadata || {}) };
+  if (options.generation != null) metadata.sm_session_generation = options.generation;
+  if (options.offset != null) metadata.sm_session_offset = options.offset;
+  const body = { content: raw, id: options.sessionId, metadata };
+  if (options.supportingContext) body.supportingContext = options.supportingContext;
+  return post(baseUrl, apiKey, `/ns/${namespace}/document`, body, options.timeoutMs, {
+    'x-sm-session': 'claude-code',
+  });
+}
+
+module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory, addSession };
