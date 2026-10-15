@@ -3,12 +3,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { getProfile } = require('./lib/api');
-const { getContainerTag, getProjectName } = require('./lib/container-tag');
+const { getNamespace, getProjectName } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
   loadSettings,
   getApiKey,
   getBaseUrl,
+  getApiVersion,
   debugLog,
 } = require('./lib/settings');
 const { BRAND, MARK, bold, gray } = require('./lib/colors');
@@ -16,7 +17,11 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const { startAuthFlow, AUTH_BASE_URL } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
-const { pruneState, readCaptureNotice, writeState } = require('./lib/session-state');
+const {
+  pruneState,
+  readCaptureNotice,
+  writeState,
+} = require('./lib/session-state');
 
 const STATUSLINE_INSTALLED_FILE = path.join(
   os.homedir(),
@@ -82,23 +87,30 @@ function markTip() {
   }
 }
 
-function welcomeBackNotice(containerTag) {
+function welcomeBackNotice(namespace) {
   try {
     const last = JSON.parse(fs.readFileSync(LAST_SESSION_FILE, 'utf-8'));
-    if (!last.savedAt || last.containerTag !== containerTag) return null;
+    if (!last.savedAt || last.containerTag !== namespace) return null;
     const hours = (Date.now() - new Date(last.savedAt).getTime()) / 3600000;
     if (hours < 6) return null;
     const ago =
-      hours < 48 ? `${Math.round(hours)}h ago` : `${Math.round(hours / 24)}d ago`;
+      hours < 48
+        ? `${Math.round(hours)}h ago`
+        : `${Math.round(hours / 24)}d ago`;
     return `welcome back — last session here ${ago}`;
   } catch {
     return null;
   }
 }
 
-function formatContext(profileResult, maxItems, containerTag, projectName) {
-  const statics = (profileResult?.profile?.static || []).slice(0, maxItems);
-  const dynamics = (profileResult?.profile?.dynamic || []).slice(0, maxItems);
+function formatContext(profileResult, maxItems, namespace, projectName) {
+  const profileText = (items) =>
+    (items || [])
+      .map((item) => (typeof item === 'string' ? item : item?.memory))
+      .filter((text) => typeof text === 'string' && text.trim())
+      .slice(0, maxItems);
+  const statics = profileText(profileResult?.profile?.static);
+  const dynamics = profileText(profileResult?.profile?.dynamic);
   if (statics.length === 0 && dynamics.length === 0) return null;
 
   const sections = [];
@@ -115,7 +127,7 @@ function formatContext(profileResult, maxItems, containerTag, projectName) {
 
   return `<supermemory-context>
 Recalled memory for this project (${projectName}). Every line marked ◪ comes from supermemory — when citing one, keep the mark and phrase it naturally (e.g. "◪ last week you told me about X"). If you name the source, say "from supermemory" — never "from memory".
-This project's memory container: ${containerTag}
+This project's memory container: ${namespace}
 
 ${sections.join('\n\n')}
 </supermemory-context>`;
@@ -153,13 +165,16 @@ async function main() {
 
     const statuslineCleanupNotice = removeLegacyStatusline();
     pruneState();
-    writeState(sessionId, 'context', { status: 'loading', memoryItemsLoaded: 0 });
+    writeState(sessionId, 'context', {
+      status: 'loading',
+      memoryItemsLoaded: 0,
+    });
 
     const projectConfig = loadProjectConfig(cwd);
     const projectName = getProjectName(cwd);
-    const containerTag = getContainerTag(cwd);
+    const namespace = getNamespace(cwd);
 
-    debugLog(settings, 'SessionStart', { cwd, projectName, containerTag });
+    debugLog(settings, 'SessionStart', { cwd, projectName, namespace });
 
     let apiKey;
     try {
@@ -168,7 +183,10 @@ async function main() {
       try {
         apiKey = await startAuthFlow();
       } catch (authErr) {
-        writeState(sessionId, 'context', { status: 'error', memoryItemsLoaded: 0 });
+        writeState(sessionId, 'context', {
+          status: 'error',
+          memoryItemsLoaded: 0,
+        });
         output(
           `<supermemory-status>
 ${authErr.message === 'AUTH_TIMEOUT' ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
@@ -186,23 +204,38 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
     let profileResult = null;
     let apiError = null;
     try {
-      profileResult = await getProfile(baseUrl, apiKey, containerTag, projectName);
+      profileResult = await getProfile(
+        baseUrl,
+        apiKey,
+        namespace,
+        projectName,
+        {
+          apiVersion: getApiVersion(cwd, projectConfig),
+        },
+      );
     } catch (err) {
-      // Fail open, but never silently: a network failure must not be dressed
-      // up as "this project has no memories". Only 404 means genuinely empty.
-      if (err?.status !== 404) apiError = getUserFriendlyError(err);
-      debugLog(settings, 'Profile fetch failed', { error: err.message });
+      if ((err?.status ?? err?.statusCode) !== 404)
+        apiError = getUserFriendlyError(err);
+      debugLog(settings, 'Profile fetch failed', {
+        error: getUserFriendlyError(err),
+      });
     }
 
     const context = formatContext(
       profileResult,
       settings.maxProfileItems,
-      containerTag,
+      namespace,
       projectName,
     );
     const loaded =
-      Math.min(profileResult?.profile?.static?.length || 0, settings.maxProfileItems) +
-      Math.min(profileResult?.profile?.dynamic?.length || 0, settings.maxProfileItems);
+      Math.min(
+        profileResult?.profile?.static?.length || 0,
+        settings.maxProfileItems,
+      ) +
+      Math.min(
+        profileResult?.profile?.dynamic?.length || 0,
+        settings.maxProfileItems,
+      );
 
     writeState(sessionId, 'context', {
       status: apiError ? 'error' : 'ready',
@@ -216,7 +249,9 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
 
     const captureNotice = captureFailureNotice();
     output(
-      (apiError ? `<supermemory-status>\n${apiError}\n</supermemory-status>\n` : '') +
+      (apiError
+        ? `<supermemory-status>\n${apiError}\n</supermemory-status>\n`
+        : '') +
         (captureNotice
           ? `<supermemory-status>\n${captureNotice.status}\n</supermemory-status>\n`
           : '') +
@@ -226,12 +261,12 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
 Memory could not be loaded this session — do not assume this project has no memories.
 </supermemory-context>`
             : `<supermemory-context>
-No previous memories found for this project (container: ${containerTag}).
+No previous memories found for this project (container: ${namespace}).
 Memories will be saved as you work.
 </supermemory-context>`)),
       [
         captureNotice?.systemMessage,
-        [memoryNotice, welcomeBackNotice(containerTag)]
+        [memoryNotice, welcomeBackNotice(namespace)]
           .filter(Boolean)
           .join(gray(' · ')) || null,
         markTip(),

@@ -1,7 +1,7 @@
-const { addMemory, AGENT_ENTITY_CONTEXT } = require('./lib/api');
+const { addMemory, AGENT_SUPPORTING_CONTEXT } = require('./lib/api');
 const { redactSecrets } = require('./lib/redact');
 const {
-  getContainerTag,
+  getNamespace,
   getProjectIdentity,
   getProjectName,
 } = require('./lib/container-tag');
@@ -10,6 +10,7 @@ const {
   loadSettings,
   getApiKey,
   getBaseUrl,
+  getApiVersion,
   debugLog,
   getSignalConfig,
 } = require('./lib/settings');
@@ -81,7 +82,7 @@ async function main() {
     }
 
     const baseUrl = getBaseUrl(cwd, projectConfig);
-    const containerTag = getContainerTag(cwd);
+    const namespace = getNamespace(cwd);
 
     writeState(sessionId, 'capture', { status: 'saving', count: captured });
 
@@ -89,7 +90,7 @@ async function main() {
       baseUrl,
       apiKey,
       redactSecrets(delta.formatted),
-      containerTag,
+      namespace,
       {
         type: 'session_turn',
         project: getProjectName(cwd),
@@ -99,8 +100,9 @@ async function main() {
         timestamp: new Date().toISOString(),
       },
       {
-        customId: sessionId,
-        entityContext: AGENT_ENTITY_CONTEXT,
+        id: sessionId,
+        supportingContext: AGENT_SUPPORTING_CONTEXT,
+        apiVersion: getApiVersion(cwd, projectConfig),
         timeoutMs: CAPTURE_TIMEOUT_MS,
       },
     );
@@ -111,11 +113,13 @@ async function main() {
 
     if (result?.id) {
       try {
-        saveLastSession({ id: result.id, containerTag });
+        saveLastSession({ id: result.id, containerTag: namespace });
       } catch {}
     }
 
-    debugLog(settings, 'Session turn saved', { length: delta.formatted.length });
+    debugLog(settings, 'Session turn saved', {
+      length: delta.formatted.length,
+    });
     writeOutput({ continue: true });
   } catch (err) {
     const status = err?.status ?? err?.statusCode;

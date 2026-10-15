@@ -1,10 +1,12 @@
 // Numeric status is the stable field; error classes differ across SDK builds.
 function getUserFriendlyError(err) {
-  const status = err?.status;
+  const status = err?.status ?? err?.statusCode;
 
   if (
     err?.name === 'TimeoutError' ||
     err?.name === 'AbortError' ||
+    err?.name === 'SupermemoryTimeoutError' ||
+    (err?.name === 'SupermemoryError' && status == null) ||
     err?.message === 'fetch failed'
   ) {
     return 'Supermemory unreachable (network) — continuing without memory.';
@@ -27,41 +29,24 @@ function getUserFriendlyError(err) {
   if (typeof status === 'number' && status >= 500) {
     return 'Supermemory service is temporarily unavailable. Will retry next session.';
   }
+  if (typeof status === 'number') {
+    return `Supermemory API returned HTTP ${status}.`;
+  }
 
   return err?.message || 'Unknown error';
 }
 
-/**
- * Should the caller consider retrying this request later?
- *
- * Returns true for rate-limit (429), server errors (5xx), and
- * network/connection errors (no HTTP status at all).
- *
- * @param {Error & { status?: number }} err
- * @returns {boolean}
- */
 function isRetryableError(err) {
-  const status = err?.status;
+  const status = err?.status ?? err?.statusCode;
   if (status === 429) return true;
   if (typeof status === 'number' && status >= 500) return true;
-  // Connection / timeout errors have no status
   if (status === undefined || status === null) return true;
   return false;
 }
 
-/**
- * Is this error expected / harmless?
- *
- * 404 means the user simply has no data yet. Connection and timeout errors
- * (no HTTP status) are transient network blips.
- *
- * @param {Error & { status?: number }} err
- * @returns {boolean}
- */
 function isBenignError(err) {
-  const status = err?.status;
+  const status = err?.status ?? err?.statusCode;
   if (status === 404) return true;
-  // No status usually means a connection or timeout error
   if (status === undefined || status === null) return true;
   return false;
 }

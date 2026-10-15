@@ -2,15 +2,16 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { getProfile } = require('./lib/api');
+const { searchMemories } = require('./lib/api');
 const { BRAND, gray, red } = require('./lib/colors');
-const { getContainerTag } = require('./lib/container-tag');
+const { getNamespace } = require('./lib/container-tag');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
   loadSettings,
   getApiKey,
   getBaseUrl,
+  getApiVersion,
   debugLog,
   getRecallConfig,
 } = require('./lib/settings');
@@ -62,9 +63,7 @@ function readSeenHashes(sessionDir) {
     const list = JSON.parse(
       fs.readFileSync(path.join(sessionDir, 'recalled.json'), 'utf8'),
     );
-    return Array.isArray(list)
-      ? list.filter((h) => typeof h === 'string')
-      : [];
+    return Array.isArray(list) ? list.filter((h) => typeof h === 'string') : [];
   } catch {
     return [];
   }
@@ -97,7 +96,7 @@ function markDiscoverySent(sessionDir) {
 // TOOL_NAME_RE in recall-approve.js), and under deferred tool loading the
 // model holds a bare name with no schema — so point at the lookup, not at one
 // hardcoded name.
-function formatDiscovery(containerTag) {
+function formatDiscovery(namespace) {
   return `<supermemory-recall>
 No stored memories matched this prompt for this project.
 
@@ -105,8 +104,8 @@ Deeper history may still exist. Search it with the supermemory search_memory
 tool — exposed as mcp__…supermemory__search_memory; if its schema is not
 loaded, resolve the exact name with ToolSearch("+supermemory search_memory").
 
-- Scope to this project with containerTag: "${containerTag}"
-- Omit containerTag to search the account's active/shared space instead.
+- Scope to this project with containerTag: "${namespace}"
+- Omit containerTag to use this project's default space.
 - Read-only supermemory calls are auto-approved; they never prompt the user.
 
 Worth a call when the user refers to past decisions, earlier sessions, or says
@@ -114,10 +113,11 @@ Worth a call when the user refers to past decisions, earlier sessions, or says
 </supermemory-recall>`;
 }
 
-function formatRecall(results, containerTag) {
+function formatRecall(results, namespace) {
   const lines = results.map((r) => {
     const text = resultText(r).replace(/\s+/g, ' ').slice(0, MAX_RESULT_CHARS);
-    const title = typeof r.title === 'string' && r.title.trim() ? r.title.trim() : null;
+    const title =
+      typeof r.title === 'string' && r.title.trim() ? r.title.trim() : null;
     const prefix = title && !text.startsWith(title) ? `${title} — ` : '';
     return `- ◪ ${prefix}${text}${typeof r.filepath === 'string' && r.filepath ? ` (${r.filepath})` : ''}`;
   });
@@ -125,7 +125,7 @@ function formatRecall(results, containerTag) {
 ◪ Recalled from supermemory for this prompt (relevance-ranked):
 ${lines.join('\n')}
 
-When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool — it defaults to this project's container (${containerTag}). Pass containerTag only to search a different space. Or launch the context-gatherer agent.
+When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool — it defaults to this project's container (${namespace}). Pass containerTag only to search a different space. Or launch the context-gatherer agent.
 </supermemory-recall>`;
 }
 
@@ -162,18 +162,23 @@ async function main() {
       return;
     }
 
-    const containerTag = getContainerTag(cwd);
-    const response = await getProfile(
+    const namespace = getNamespace(cwd);
+    const response = await searchMemories(
       getBaseUrl(cwd, projectConfig),
       apiKey,
-      containerTag,
+      namespace,
       prompt.slice(0, MAX_QUERY_LENGTH),
-      { timeoutMs: SEARCH_TIMEOUT_MS },
+      {
+        timeoutMs: SEARCH_TIMEOUT_MS,
+        apiVersion: getApiVersion(cwd, projectConfig),
+      },
     );
 
-    const results = (response?.searchResults?.results || [])
+    const results = (response || [])
       .filter((r) => resultText(r))
-      .filter((r) => !Number.isFinite(r.similarity) || r.similarity >= MIN_SIMILARITY)
+      .filter(
+        (r) => !Number.isFinite(r.similarity) || r.similarity >= MIN_SIMILARITY,
+      )
       .slice(0, MAX_RESULTS);
 
     const sessionDir = getSessionDir(input.session_id);
@@ -207,7 +212,7 @@ async function main() {
           systemMessage: `${BRAND} ${gray('·')} no memories yet for this project`,
           hookSpecificOutput: {
             hookEventName: 'UserPromptSubmit',
-            additionalContext: formatDiscovery(containerTag),
+            additionalContext: formatDiscovery(namespace),
           },
         });
         return;
@@ -220,14 +225,16 @@ async function main() {
       try {
         atomicWriteJson(
           path.join(sessionDir, 'recalled.json'),
-          [...seen, ...fresh.map((r) => hashText(resultText(r)))].slice(-MAX_SEEN_HASHES),
+          [...seen, ...fresh.map((r) => hashText(resultText(r)))].slice(
+            -MAX_SEEN_HASHES,
+          ),
         );
       } catch {
         // Dedup is best effort; recall itself must still go through.
       }
     }
 
-    const context = formatRecall(fresh, containerTag);
+    const context = formatRecall(fresh, namespace);
     // ~4 chars/token: close enough to show what the injection costs.
     const tok = gray(`(${Math.round(context.length / 4)} tok)`);
     const label = repeats
@@ -241,9 +248,16 @@ async function main() {
       },
     });
   } catch (err) {
-    debugLog(settings, 'Recall directive error', { error: err.message });
+    debugLog(settings, 'Recall directive error', {
+      error: getUserFriendlyError(err),
+    });
     // A slow recall should not interrupt every prompt with an error banner.
-    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+    if (
+      err?.name === 'TimeoutError' ||
+      err?.name === 'AbortError' ||
+      err?.name === 'SupermemoryTimeoutError' ||
+      err?.cause?.name === 'TimeoutError'
+    ) {
       writeOutput({ continue: true, suppressOutput: true });
       return;
     }

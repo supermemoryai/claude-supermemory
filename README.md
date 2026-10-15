@@ -112,8 +112,8 @@ path instead of the remote identity.
 
 Unlike Codex, this plugin does not read older per-tool legacy containers
 (`codex_user_*`, `opencode_project_*`, and similar); it only ever uses the single
-unified tag above, generated fresh or overridden via `repoContainerTag` /
-`SUPERMEMORY_REPO_TAG`.
+unified identity above, overridden via `namespace` / `SUPERMEMORY_NAMESPACE`
+or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
 
 ## Configuration
 
@@ -122,10 +122,11 @@ unified tag above, generated fresh or overridden via `repoContainerTag` /
 | Variable | Purpose |
 | --- | --- |
 | `SUPERMEMORY_CC_API_KEY` | Your Supermemory API key (browser auth is preferred). |
-| `SUPERMEMORY_API_URL` | Override the Supermemory API base URL. |
+| `SUPERMEMORY_API_URL` | Override the Supermemory REST base URL; custom URLs default to legacy compatibility. |
 | `SUPERMEMORY_MCP_URL` | Override the hosted MCP endpoint (default `https://mcp.supermemory.ai/mcp`). |
 | `SUPERMEMORY_AUTH_URL` | Override the browser-auth base URL. |
-| `SUPERMEMORY_REPO_TAG` | Project-container override, used only when project config has no `repoContainerTag`. |
+| `SUPERMEMORY_REPO_TAG` | Legacy project-scope override; used when no project scope or canonical environment override is set. |
+| `SUPERMEMORY_NAMESPACE` | Canonical namespace override; project scope settings take precedence. |
 | `SUPERMEMORY_ISOLATE_WORKTREES` | Set to `true` to key the project container on the worktree path instead of the Git remote. |
 | `SUPERMEMORY_DEBUG` | Set to `true` to enable debug logging. |
 
@@ -155,11 +156,14 @@ unified tag above, generated fresh or overridden via `repoContainerTag` /
 
 Per-repo overrides, created manually or via the settings your team shares:
 
+API key precedence is `SUPERMEMORY_CC_API_KEY`, project `apiKey`, then
+`~/.supermemory-claude/credentials.json`.
+
 ```json
 {
   "apiKey": "sm_...",
   "baseUrl": "https://api.supermemory.ai",
-  "repoContainerTag": "my-team-project",
+  "namespace": "my-team-project",
   "signalExtraction": true
 }
 ```
@@ -168,7 +172,34 @@ Per-repo overrides, created manually or via the settings your team shares:
 | --- | --- |
 | `apiKey` | Project-specific API key. |
 | `baseUrl` | Supermemory API URL. |
+| `namespace` | Canonical project scope, preserving the exact old container-tag value. |
 | `repoContainerTag` | Override the unified project container tag. Checked before `SUPERMEMORY_REPO_TAG`. |
+
+### Advanced self-hosted compatibility
+
+Hosted Supermemory uses v5 without a version choice. Existing custom REST URLs
+default to `legacy`, keeping v3 writes and v4 profiles for self-hosted servers
+older than 0.0.9. After upgrading the server, explicitly set
+`SUPERMEMORY_API_VERSION=v5` or project `apiVersion: "v5"`. The environment
+setting takes precedence; `legacy` is also an explicit rollback option for a
+server that still supports v3/v4. Invalid values fail closed for memory operations.
+There is no automatic version fallback after a failed request and no fallback to
+the hosted API. REST, MCP, and browser-auth URLs remain separate.
+
+Scope precedence is project `namespace`, project `repoContainerTag`,
+`SUPERMEMORY_NAMESPACE`, `SUPERMEMORY_REPO_TAG`, then the generated identity.
+Keep an existing override's exact value when renaming its setting: changing the
+value selects another space, not a data migration. V5 scopes allow 1–100 letters,
+digits, underscores, hyphens, or colons; invalid scopes are rejected before any
+request without rewriting config or capture cursors.
+
+The published legacy profile/search contracts already have the v5 namespace
+restriction, but legacy ingestion describes dot-containing tags. For such
+historical capture-only scopes, explicitly set `SUPERMEMORY_API_VERSION=legacy`
+or project `apiVersion: "legacy"` only if the server still supports it; retain the
+exact scope value, never rename it to make it fit v5. Historical hosted ingestion
+acceptance and data availability remain unverified. There is no automatic switch
+or failed-write retry across protocols.
 
 ## Commands
 
@@ -200,6 +231,14 @@ For information about how Supermemory collects, uses, and retains data, see the
 ## License
 
 MIT
+
+## Development runtime
+
+Marketplace installations need only Node 18 or later, not `npm install`.
+`plugin/hooks/vendor/supermemory.cjs` is the committed runtime bundle built from
+the exact official SDK and esbuild versions in `package-lock.json`. Maintainers
+reproduce it with `npm ci && npm run build:sdk`; CI rejects a stale bundle.
+The SDK's Apache-2.0 license is included alongside the generated bundle.
 
 ---
 
