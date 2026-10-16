@@ -1,10 +1,7 @@
 #!/usr/bin/env node
 const readline = require('node:readline');
 const { getContainerTag } = require('./lib/container-tag');
-const { getApiKey } = require('./lib/settings');
-
-const MCP_URL =
-  process.env.SUPERMEMORY_MCP_URL || 'https://mcp.supermemory.ai/mcp';
+const { getAuthToken, getMcpUrl } = require('./lib/settings');
 const REQUEST_TIMEOUT_MS = 30000;
 
 const REPO_SCOPED_TOOLS = new Set([
@@ -75,7 +72,7 @@ async function forward(message, apiKey) {
   };
   if (sessionId) headers['Mcp-Session-Id'] = sessionId;
 
-  const response = await fetch(MCP_URL, {
+  const response = await fetch(getMcpUrl(), {
     method: 'POST',
     headers,
     body: JSON.stringify(message),
@@ -109,14 +106,7 @@ async function forward(message, apiKey) {
 
 async function main() {
   const cwd = process.cwd();
-  let apiKey = null;
-  let keyError = null;
   let repoContainerTag = null;
-  try {
-    apiKey = getApiKey(cwd);
-  } catch (err) {
-    keyError = err;
-  }
   try {
     repoContainerTag = getContainerTag(cwd);
   } catch {
@@ -136,18 +126,22 @@ async function main() {
     }
 
     queue = queue.then(async () => {
-      if (keyError) {
-        sendError(
-          message.id,
-          -32001,
-          'Supermemory is not authenticated. Start a Claude Code session with the supermemory plugin to log in, or set SUPERMEMORY_CC_API_KEY.',
-        );
-        return;
-      }
       try {
+        // Re-read on every message: the SessionStart hook may finish login
+        // after this process starts, and OAuth tokens expire during sessions.
+        const apiKey = await getAuthToken(cwd);
         injectRepoContainerTag(message, repoContainerTag);
         await forward(message, apiKey);
       } catch (err) {
+        if (err.code === 'AUTH_REQUIRED') {
+          sessionId = null;
+          sendError(
+            message.id,
+            -32001,
+            'Supermemory is not authenticated. Start a Claude Code session with the supermemory plugin to log in, or set SUPERMEMORY_CC_API_KEY.',
+          );
+          return;
+        }
         sendError(message.id, -32000, `Supermemory MCP proxy error: ${err.message}`);
       }
     });
