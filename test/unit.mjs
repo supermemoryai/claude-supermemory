@@ -495,6 +495,44 @@ describe('capture hook', () => {
     });
   }
 
+  test('keeps AskUserQuestion answers whole while other tool results stay capped', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+    writeFileSync(join(home, '.supermemory-claude', 'settings.json'),
+      JSON.stringify({ includeTools: ['AskUserQuestion', 'Read'] }));
+    const transcript = join(makeTempDir(t, 'ask-answer'), 'session.jsonl');
+    const answer = `Your questions have been answered: "Which database?"="Postgres, ${'because we already run it in production and the team knows it well. '.repeat(10)}END-OF-ANSWER"`;
+    const fileText = `${'x'.repeat(600)}END-OF-FILE`;
+    const entries = [
+      { type: 'user', uuid: 'u1', timestamp: '2026-10-16T07:00:00Z',
+        message: { content: 'Help me pick a database for the new service.' } },
+      { type: 'assistant', uuid: 'a1', message: { content: [
+        { type: 'tool_use', id: 'q1', name: 'AskUserQuestion', input: { question: 'Which database?' } },
+        { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: 'notes.md' } },
+      ] } },
+      { type: 'user', uuid: 'u2', message: { content: [
+        { type: 'tool_result', tool_use_id: 'q1', content: answer },
+        { type: 'tool_result', tool_use_id: 'r1', content: fileText },
+      ] } },
+    ];
+    writeFileSync(transcript, entries.map((entry) => JSON.stringify(entry)).join('\n'));
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ id: 'doc_ask', status: 'queued' }));
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const input = { session_id: 'ask-answer', cwd: repo, transcript_path: transcript,
+      last_assistant_message: 'Going with Postgres, since the team already runs it in production.' };
+    assert.equal((await runHook('capture.js', input, env)).code, 0);
+    assert.equal(stub.requests.length, 1);
+    const { content } = JSON.parse(stub.requests[0].body);
+    assert.ok(answer.length > 500);
+    assert.ok(content.includes('END-OF-ANSWER'), 'the AskUserQuestion answer was truncated');
+    assert.ok(!content.includes('END-OF-FILE'), 'other tool results should still be capped');
+  });
+
   test('saves the transcript delta with scope metadata and entity context', async (t) => {
     const { repo, home } = makeRepo(t);
     mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
