@@ -1,4 +1,5 @@
-const { addMemory, AGENT_ENTITY_CONTEXT } = require('./lib/api');
+const { addMemory, AGENT_ENTITY_CONTEXT, getDocumentById } = require('./lib/api');
+const { isAlreadyStored, trimForAppend } = require('./lib/capture-dedup');
 const { redactSecrets } = require('./lib/redact');
 const {
   getContainerTag,
@@ -30,10 +31,30 @@ const {
 
 const CAPTURE_TIMEOUT_MS = 25000;
 
+function isCaptureTimeout(err) {
+  return err?.name === 'TimeoutError' || err?.name === 'AbortError';
+}
+
+async function readStoredSessionContent(baseUrl, apiKey, sessionId) {
+  try {
+    const doc = await getDocumentById(baseUrl, apiKey, sessionId, {
+      timeoutMs: CAPTURE_TIMEOUT_MS,
+    });
+    return typeof doc?.content === 'string' ? doc.content : '';
+  } catch (err) {
+    if (err?.status === 404) return '';
+    throw err;
+  }
+}
+
 // Stop allows 30s; this write outlives the 3s default without slowing SessionStart.
 async function main() {
   const settings = loadSettings();
   let sessionId;
+  let delta;
+  let baseUrl;
+  let apiKey;
+  let captured = 0;
 
   try {
     const input = await readStdin();
@@ -47,7 +68,6 @@ async function main() {
       return;
     }
 
-    let apiKey;
     try {
       apiKey = getApiKey(cwd, projectConfig);
     } catch {
@@ -55,7 +75,7 @@ async function main() {
       return;
     }
 
-    const delta = getSignalConfig(cwd).enabled
+    delta = getSignalConfig(cwd).enabled
       ? formatSignalEntries(
           transcriptPath,
           sessionId,
@@ -69,7 +89,7 @@ async function main() {
           input.last_assistant_message,
         );
 
-    const captured = readState(sessionId, 'capture')?.count || 0;
+    captured = readState(sessionId, 'capture')?.count || 0;
     if (!delta) {
       writeState(sessionId, 'capture', {
         status: 'no_content',
@@ -80,15 +100,34 @@ async function main() {
       return;
     }
 
-    const baseUrl = getBaseUrl(cwd, projectConfig);
+    baseUrl = getBaseUrl(cwd, projectConfig);
     const containerTag = getContainerTag(cwd);
 
     writeState(sessionId, 'capture', { status: 'saving', count: captured });
 
+    const pending = redactSecrets(delta.formatted);
+    const stored = await readStoredSessionContent(baseUrl, apiKey, sessionId);
+    if (isAlreadyStored(stored, pending)) {
+      setLastCapturedUuid(sessionId, delta.lastUuid, delta.pendingReplies);
+      writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
+      clearCaptureNotice();
+      debugLog(settings, 'Capture skipped — server already has this delta', {
+        sessionId,
+      });
+      writeOutput({ continue: true });
+      return;
+    }
+    const content = trimForAppend(stored, pending);
+    if (!content.trim()) {
+      writeState(sessionId, 'capture', { status: 'no_content', count: captured });
+      writeOutput({ continue: true });
+      return;
+    }
+
     const result = await addMemory(
       baseUrl,
       apiKey,
-      redactSecrets(delta.formatted),
+      content,
       containerTag,
       {
         type: 'session_turn',
@@ -118,6 +157,30 @@ async function main() {
     debugLog(settings, 'Session turn saved', { length: delta.formatted.length });
     writeOutput({ continue: true });
   } catch (err) {
+    if (isCaptureTimeout(err) && sessionId && delta?.formatted && baseUrl && apiKey) {
+      try {
+        const stored = await readStoredSessionContent(baseUrl, apiKey, sessionId);
+        const pending = redactSecrets(delta.formatted);
+        if (isAlreadyStored(stored, pending)) {
+          setLastCapturedUuid(sessionId, delta.lastUuid, delta.pendingReplies);
+          writeState(sessionId, 'capture', {
+            status: 'saved',
+            count: captured + 1,
+          });
+          clearCaptureNotice();
+          debugLog(settings, 'Capture reconciled after timeout — content already stored', {
+            sessionId,
+          });
+          writeOutput({ continue: true });
+          return;
+        }
+      } catch (reconcileErr) {
+        debugLog(settings, 'Capture reconcile after timeout failed', {
+          error: reconcileErr.message,
+        });
+      }
+    }
+
     const status = err?.status ?? err?.statusCode;
     const friendly = redactSecrets(
       getUserFriendlyError(

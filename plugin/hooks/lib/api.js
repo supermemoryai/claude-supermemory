@@ -25,6 +25,26 @@ SKIP:
 // Callers treat failure as "no memory this time", not a blocker.
 const REQUEST_TIMEOUT_MS = 3000;
 
+async function get(baseUrl, apiKey, path, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'x-sm-source': 'claude-code',
+    },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw Object.assign(
+      new Error(`Supermemory API ${response.status}: ${text.slice(0, 200)}`),
+      { status: response.status },
+    );
+  }
+  return response.json();
+}
+
 async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
@@ -51,6 +71,12 @@ function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
   return post(baseUrl, apiKey, '/v4/profile', { containerTag, q: query }, options.timeoutMs);
 }
 
+// customId is accepted as the path id (same as delete-by-customId).
+function getDocumentById(baseUrl, apiKey, documentId, options = {}) {
+  const id = encodeURIComponent(documentId);
+  return get(baseUrl, apiKey, `/v3/documents/${id}`, options.timeoutMs);
+}
+
 function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {}) {
   const body = {
     content,
@@ -62,4 +88,9 @@ function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {
   return post(baseUrl, apiKey, '/v3/documents', body, options.timeoutMs);
 }
 
-module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory };
+module.exports = {
+  AGENT_ENTITY_CONTEXT,
+  getProfile,
+  getDocumentById,
+  addMemory,
+};

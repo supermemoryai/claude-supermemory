@@ -448,6 +448,58 @@ describe('transcript turn boundaries', () => {
   }
 });
 
+describe('capture dedup', () => {
+  const {
+    longestAppendOverlap,
+    trimForAppend,
+    isAlreadyStored,
+  } = require('../plugin/hooks/lib/capture-dedup.js');
+
+  test('matches the #130 overlap table (D2 stored, retry sends D2 + D3)', () => {
+    const D1 = 'TURN-ONE: the router never changes the active project from a street name.';
+    const D2 = 'TURN-TWO: staging deploys are fast-forward merges pinned with the build tool.';
+    const D3 = 'TURN-THREE: the consent question is asked again without spending the retry.';
+    const stored = `${D1}\n\n${D2}`;
+    assert.equal(longestAppendOverlap(stored, D2), D2.length);
+    assert.equal(trimForAppend(stored, D2), '');
+    assert.ok(isAlreadyStored(stored, D2));
+    assert.equal(trimForAppend(stored, `${D2}\n\n${D3}`), D3);
+    assert.equal(trimForAppend(stored, `${D1}\n\n${D2}\n\n${D3}`), D3);
+  });
+});
+
+function startCaptureStubServer(t, handler) {
+  return startStubServer(t, (record, res) => {
+    if (record.method === 'GET' && record.url.startsWith('/v3/documents/')) {
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'not found' }));
+      return;
+    }
+    handler(record, res);
+  });
+}
+
+function postBodies(stub) {
+  return stub.requests
+    .filter((r) => r.method === 'POST' && r.url === '/v3/documents')
+    .map((r) => JSON.parse(r.body));
+}
+
+function readCaptureStateForHome(home, sessionId) {
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  try {
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    const { readState } = require('../plugin/hooks/lib/session-state.js');
+    return readState(sessionId, 'capture');
+  } finally {
+    process.env.HOME = prevHome;
+    process.env.USERPROFILE = prevProfile;
+  }
+}
+
 describe('capture hook', () => {
   for (const settings of [{}, { includeTools: ['Read'] }, { signalExtraction: true }]) {
     test(`first save includes the prompt across multiple tool calls (${JSON.stringify(settings)})`, async (t) => {
@@ -470,7 +522,7 @@ describe('capture hook', () => {
         ]),
       ];
       writeFileSync(transcript, entries.map((entry) => JSON.stringify(entry)).join('\n'));
-      const stub = await startStubServer(t, (record, res) => {
+      const stub = await startCaptureStubServer(t, (record, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ id: 'doc_first', status: 'queued' }));
       });
@@ -479,8 +531,8 @@ describe('capture hook', () => {
       const input = { session_id: 'first-save', cwd: repo, transcript_path: transcript,
         last_assistant_message: finalReply };
       assert.equal((await runHook('capture.js', input, env)).code, 0);
-      assert.equal(stub.requests.length, 1);
-      const { content } = JSON.parse(stub.requests[0].body);
+      assert.equal(postBodies(stub).length, 1);
+      const { content } = postBodies(stub)[0];
       assert.match(content, /Remember the release date from notes.md/);
       assert.ok(content.includes(finalReply));
       assert.match(content, /<\|turn_start\|>2026-10-12T07:00:00Z/);
@@ -491,7 +543,7 @@ describe('capture hook', () => {
       } });
       writeFileSync(transcript, entries.map((entry) => JSON.stringify(entry)).join('\n'));
       await runHook('capture.js', input, env);
-      assert.equal(stub.requests.length, 1);
+      assert.equal(postBodies(stub).length, 1);
     });
   }
 
@@ -521,7 +573,7 @@ describe('capture hook', () => {
         }),
       ].join('\n'),
     );
-    const stub = await startStubServer(t, (record, res) => {
+    const stub = await startCaptureStubServer(t, (record, res) => {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ id: 'doc_123', status: 'queued' }));
     });
@@ -532,19 +584,15 @@ describe('capture hook', () => {
       { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
     );
     assert.equal(code, 0);
-    assert.equal(stub.requests.length, 1);
-    assert.equal(stub.requests[0].url, '/v3/documents');
-    const body = JSON.parse(stub.requests[0].body);
+    assert.equal(postBodies(stub).length, 1);
+    const body = postBodies(stub)[0];
     assert.match(body.content, /statusline symlink/);
     assert.match(body.containerTag, /^repo_example_project__/);
     assert.equal(body.metadata.sm_scope, 'personal');
     assert.equal(body.customId, 'sess-2');
     assert.match(body.entityContext, /EXTRACT/);
 
-    const state = readState('sess-2', {
-      dataDir: join(home, '.supermemory-claude', 'statusline'),
-    });
-    assert.equal(state.capture.status, 'saved');
+    assert.equal(readCaptureStateForHome(home, 'sess-2')?.status, 'saved');
   });
 
   test('a failed save does not advance the cursor; the retry recaptures (issue #96)', async (t) => {
@@ -565,27 +613,133 @@ describe('capture hook', () => {
       }),
     );
     let failing = true;
-    const stub = await startStubServer(t, (record, res) => {
+    const stub = await startCaptureStubServer(t, (record, res) => {
       res.statusCode = failing ? 500 : 200;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify(failing ? { error: 'boom' } : { id: 'doc_9' }));
     });
     const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
     const input = { session_id: 'sess-retry', cwd: repo, transcript_path: transcript };
-
     await runHook('capture.js', input, env);
-    const dataDir = join(home, '.supermemory-claude', 'statusline');
-    assert.equal(readState('sess-retry', { dataDir }).capture.status, 'error');
+    assert.equal(readCaptureStateForHome(home, 'sess-retry')?.status, 'error');
 
     failing = false;
     await runHook('capture.js', input, env);
-    assert.equal(stub.requests.length, 2);
-    assert.match(JSON.parse(stub.requests[1].body).content, /Drizzle over Prisma/);
-    assert.equal(readState('sess-retry', { dataDir }).capture.status, 'saved');
+    assert.equal(postBodies(stub).length, 2);
+    assert.match(postBodies(stub)[1].content, /Drizzle over Prisma/);
+    assert.equal(readCaptureStateForHome(home, 'sess-retry')?.status, 'saved');
 
     // Cursor advanced after success: a third run finds nothing new.
     await runHook('capture.js', input, env);
-    assert.equal(stub.requests.length, 2);
+    assert.equal(postBodies(stub).length, 2);
+  });
+
+  test('skips POST when the server already holds the pending delta (issue #130)', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
+    );
+    const { formatNewEntries } = require('../plugin/hooks/lib/transcript.js');
+    const transcript = join(makeTempDir(t, 'transcript-dedup'), 'session.jsonl');
+    const userLine =
+      'Remember for the team: staging deploys are fast-forward merges pinned with the build tool, and we never hotfix production without a rollback plan in place.';
+    writeFileSync(
+      transcript,
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u-dedup',
+        timestamp: '2026-10-17T12:00:00Z',
+        message: { content: userLine },
+      }),
+    );
+    const sessionId = 'sess-dedup-pre';
+    const pending = formatNewEntries(transcript, sessionId, repo, undefined);
+    assert.ok(pending?.formatted);
+
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (record.method === 'GET' && record.url.startsWith('/v3/documents/')) {
+        return res.end(JSON.stringify({ content: pending.formatted, status: 'done' }));
+      }
+      if (record.url === '/v3/documents') {
+        res.statusCode = 500;
+        return res.end(JSON.stringify({ error: 'should not POST' }));
+      }
+      res.statusCode = 404;
+      res.end('{}');
+    });
+
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    await runHook(
+      'capture.js',
+      { session_id: sessionId, cwd: repo, transcript_path: transcript },
+      env,
+    );
+    assert.equal(postBodies(stub).length, 0);
+    assert.equal(readCaptureStateForHome(home, sessionId)?.status, 'saved');
+  });
+
+  test('trims overlapping prefix before POST when customId document already exists (issue #130)', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
+    );
+    const D2 =
+      'TURN-TWO: staging deploys are fast-forward merges pinned with the build tool for every release train we ship this quarter.';
+    const D3 =
+      'TURN-THREE: the consent question is asked again without spending the retry token on unrelated assistant chatter from the prior turn.';
+    const transcript = join(makeTempDir(t, 'transcript-overlap'), 'session.jsonl');
+    writeFileSync(
+      transcript,
+      [
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u1',
+          timestamp: '2026-10-17T12:00:00Z',
+          message: { content: D2 },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          uuid: 'a1',
+          message: { content: [{ type: 'text', text: 'Acknowledged — noted for the release checklist and rollback plan.' }] },
+        }),
+        JSON.stringify({
+          type: 'user',
+          uuid: 'u2',
+          timestamp: '2026-10-17T12:01:00Z',
+          message: { content: D3 },
+        }),
+      ].join('\n'),
+    );
+
+    const storedPrefix = `TURN-ONE: prior context from an earlier session that already landed on the server.\n\n${D2}`;
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (record.method === 'GET' && record.url.startsWith('/v3/documents/')) {
+        return res.end(JSON.stringify({ content: storedPrefix, status: 'done' }));
+      }
+      if (record.url === '/v3/documents') {
+        return res.end(JSON.stringify({ id: 'doc_overlap', status: 'queued' }));
+      }
+      res.statusCode = 404;
+      res.end('{}');
+    });
+
+    const { code } = await runHook(
+      'capture.js',
+      { session_id: 'sess-overlap', cwd: repo, transcript_path: transcript },
+      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
+    );
+    assert.equal(code, 0);
+    const post = stub.requests.find((r) => r.url === '/v3/documents' && r.method === 'POST');
+    assert.ok(post);
+    const body = JSON.parse(post.body);
+    assert.doesNotMatch(body.content, /TURN-TWO: staging deploys/);
+    assert.match(body.content, /TURN-THREE: the consent question/);
   });
 });
 
