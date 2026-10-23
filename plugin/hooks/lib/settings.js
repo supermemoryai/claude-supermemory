@@ -1,7 +1,18 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { loadCredentials, getAccessToken, getOAuthConfig } = require('./auth');
+const {
+  loadCredentials,
+  getAccessToken,
+  getOAuthConfig,
+  startAuthFlow,
+} = require('./auth');
+const {
+  appendProjectRule,
+  listOAuthOrgs,
+  planRepoBinding,
+  routeOrganization,
+} = require('../vendor/agent-config.cjs');
 const { loadProjectConfig } = require('./project-config');
 
 const BASE_URL = 'https://api.supermemory.ai';
@@ -53,6 +64,54 @@ function loadSettings() {
   return settings;
 }
 
+const LOGIN_HINT = `node "${path.join(__dirname, 'auth.js')}" login`;
+
+function authRequired() {
+  return Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' });
+}
+
+// Which of this plugin's OAuth logins the directory uses, from the shared
+// rules in ~/.supermemory/config.json and the repository's team file.
+function routeDirectory(cwd, credentials = loadCredentials()) {
+  return routeOrganization({
+    cwd: cwd || process.cwd(),
+    held: credentials?.type === 'oauth' ? listOAuthOrgs(credentials) : [],
+    loginHint: LOGIN_HINT,
+  });
+}
+
+// The directory belongs to an org this plugin can't use (not logged in to it,
+// or the API rejected it). Nothing is saved or recalled, and no other org is
+// used in its place.
+function orgPaused(route) {
+  return Object.assign(
+    new Error(route.warnings[0] || 'Supermemory is paused in this directory.'),
+    { code: 'ORG_PAUSED', route },
+  );
+}
+
+const ORG_PROMPTS_FILE = path.join(SETTINGS_DIR, 'org-login-prompts.json');
+const ORG_PROMPT_INTERVAL_MS = 12 * 60 * 60 * 1000;
+
+// A paused directory opens the consent screen at most every 12 hours per org,
+// so a repo for an org you left doesn't open a browser every session.
+function claimOrgLoginPrompt(route) {
+  const key = `${route.source}:${route.orgId || route.detail || ''}`;
+  let prompts = {};
+  try {
+    prompts = JSON.parse(fs.readFileSync(ORG_PROMPTS_FILE, 'utf-8')) || {};
+  } catch {}
+  if (Date.now() - (prompts[key] || 0) < ORG_PROMPT_INTERVAL_MS) return false;
+  try {
+    fs.mkdirSync(SETTINGS_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      ORG_PROMPTS_FILE,
+      JSON.stringify({ ...prompts, [key]: Date.now() }),
+    );
+  } catch {}
+  return true;
+}
+
 async function getAuthToken(cwd, projectConfig, timeoutMs) {
   if (process.env.SUPERMEMORY_CC_API_KEY)
     return process.env.SUPERMEMORY_CC_API_KEY;
@@ -62,17 +121,55 @@ async function getAuthToken(cwd, projectConfig, timeoutMs) {
 
   const credentials = loadCredentials();
   if (credentials?.type === 'oauth') {
+    const route = routeDirectory(cwd, credentials);
+    if (route.paused) throw orgPaused(route);
+    if (!route.orgId) throw authRequired();
     return getAccessToken(
       getOAuthConfig(
         getBaseUrl(cwd, projectConfig),
         getMcpUrl(cwd, projectConfig),
       ),
+      route.orgId,
       timeoutMs,
     );
   }
   if (credentials?.apiKey) return credentials.apiKey;
 
-  throw Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' });
+  throw authRequired();
+}
+
+// Log in from this directory and return the token it should use. A login adds
+// the organization picked on the consent screen. If the repository wasn't
+// routed yet and would have used a different org, it is bound to the new one
+// so a later default change can't move its memories. Returns the notice to
+// show, if any.
+async function loginForDirectory(cwd, projectConfig, timeoutMs) {
+  const config = getOAuthConfig(
+    getBaseUrl(cwd, projectConfig),
+    getMcpUrl(cwd, projectConfig),
+  );
+  const before = routeDirectory(cwd);
+  const { orgId } = await startAuthFlow(config, { force: true, timeoutMs });
+  const notices = [];
+  const rule = planRepoBinding(cwd, before, orgId);
+  if (rule && appendProjectRule(rule)) {
+    notices.push(
+      `This repository (${rule.match.repo}) now uses organization ${orgId}. Undo by removing the rule from ~/.supermemory/config.json.`,
+    );
+  }
+  const route = routeDirectory(cwd);
+  if (route.paused || !route.orgId) {
+    throw orgPaused({
+      ...route,
+      warnings: [
+        `You logged in to organization ${orgId}, but this directory belongs to ${route.orgId || route.detail || 'another organization'}. Log in again and pick that organization.`,
+      ],
+    });
+  }
+  return {
+    apiKey: await getAccessToken(config, route.orgId, timeoutMs),
+    notices,
+  };
 }
 
 function normalizeBaseUrl(baseUrl) {
@@ -209,6 +306,9 @@ module.exports = {
   DEFAULT_SETTINGS,
   loadSettings,
   getAuthToken,
+  loginForDirectory,
+  routeDirectory,
+  claimOrgLoginPrompt,
   getBaseUrl,
   getMcpUrl,
   getApiVersion,

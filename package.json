@@ -9,7 +9,8 @@
     "test": "node --test test/unit.mjs",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "build:agent-config": "node scripts/build-agent-config.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

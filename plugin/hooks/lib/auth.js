@@ -26,6 +26,19 @@ function renderAuthError(error) {
         : 'Supermemory could not finish signing you in. Return to Claude Code and run the login again.',
     );
 }
+const {
+  listOAuthOrgs,
+  newOAuthStore,
+  oauthTokensFor,
+  orgIdFromAccessToken,
+  upgradeOAuthStore,
+  withDefaultOAuthOrg,
+  withOAuthTokens,
+  withoutAnyOAuthTokens,
+  withoutOAuthOrg,
+  withRejectedOAuthOrg,
+} = require('../vendor/agent-config.cjs');
+
 const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
 const CLIENT_FILE = path.join(SETTINGS_DIR, 'oauth-client.json');
@@ -35,6 +48,9 @@ const AUTH_TIMEOUT = 25000;
 const REFRESH_TIMEOUT = 3000;
 const REFRESH_REQUEST_TIMEOUT = 10000;
 const REFRESH_SKEW = 60000;
+// A 401 on a token this young means the org itself refused us (removed from
+// the org, grant revoked), not an expired token.
+const FRESH_TOKEN_MS = 2 * 60 * 1000;
 const REDIRECT_URI = `http://127.0.0.1:${AUTH_PORT}/callback`;
 
 function openUrl(url) {
@@ -62,9 +78,13 @@ function readJson(file) {
   }
 }
 
+// An API-key file is returned as saved. An OAuth file is returned as the
+// per-organization store (v2); a v1 single login is read under the org its
+// token names and written back as v2 on the next save.
 function loadCredentials() {
   const data = readJson(CREDENTIALS_FILE);
-  return data?.apiKey || data?.type === 'oauth' ? data : null;
+  if (data?.apiKey) return data;
+  return upgradeOAuthStore(data)?.store ?? null;
 }
 
 function writeJson(file, data) {
@@ -307,66 +327,68 @@ async function exchangeToken(client, parameters, signal, previous) {
     throw new Error('OAuth returned an invalid token response.');
   }
   signal.throwIfAborted();
-  saveCredentials({
-    ...client,
-    type: 'oauth',
+  return {
     accessToken: data.access_token,
     refreshToken,
     expiresAt: Date.now() + data.expires_in * 1000,
-  });
-  return data.access_token;
+  };
 }
 
 function authRequired() {
   return Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' });
 }
 
-// Rotates the refresh token. The request always runs to completion and saves
-// the replacement, whatever the caller's deadline: aborting it mid-flight would
-// leave the server holding a rotated refresh token we never stored, and the next
-// refresh would fail with invalid_grant and sign the user out.
-let pendingRefresh = null;
+// Rotates one organization's refresh token. The request always runs to
+// completion and saves the replacement, whatever the caller's deadline:
+// aborting it mid-flight would leave the server holding a rotated refresh token
+// we never stored, and the next refresh would fail with invalid_grant.
+const pendingRefreshes = new Map();
+const pendingReports = new Set();
 
-function refreshCredentials(config) {
-  if (pendingRefresh) return pendingRefresh;
-  pendingRefresh = withAuthLock(async (remaining) => {
-    const credentials = loadCredentials();
-    if (credentials?.type !== 'oauth' || !sameConfig(credentials, config))
+function refreshCredentials(config, orgId) {
+  const existing = pendingRefreshes.get(orgId);
+  if (existing) return existing;
+  const pending = withAuthLock(async (remaining) => {
+    const store = loadCredentials();
+    if (store?.type !== 'oauth' || !sameConfig(store, config))
       throw authRequired();
-    if (
-      credentials.accessToken &&
-      credentials.expiresAt > Date.now() + REFRESH_SKEW
-    )
-      return credentials.accessToken;
-    if (!credentials.refreshToken) throw authRequired();
+    const tokens = oauthTokensFor(store, orgId);
+    if (!tokens) throw authRequired();
+    if (tokens.accessToken && tokens.expiresAt > Date.now() + REFRESH_SKEW)
+      return tokens.accessToken;
     try {
-      return await exchangeToken(
-        credentials,
-        {
-          grant_type: 'refresh_token',
-          refresh_token: credentials.refreshToken,
-        },
+      const next = await exchangeToken(
+        store,
+        { grant_type: 'refresh_token', refresh_token: tokens.refreshToken },
         AbortSignal.timeout(remaining),
-        credentials,
+        tokens,
       );
+      // The server keeps a refreshed token on its original org. If it ever
+      // didn't, file the tokens where they belong rather than lose them.
+      const grantedOrg = orgIdFromAccessToken(next.accessToken) || orgId;
+      saveCredentials(withOAuthTokens(store, grantedOrg, next));
+      if (grantedOrg !== orgId) throw authRequired();
+      return next.accessToken;
     } catch (error) {
-      if (error.code === 'invalid_grant' || error.code === 'invalid_client') {
-        const registration = { ...credentials };
-        delete registration.accessToken;
-        delete registration.refreshToken;
-        saveCredentials(registration);
-        if (error.code === 'invalid_client')
-          fs.rmSync(CLIENT_FILE, { force: true });
+      if (error.code === 'invalid_grant') {
+        // Only this organization's login is gone; the others keep working.
+        saveCredentials(withoutOAuthOrg(store, orgId));
+        throw authRequired();
+      }
+      if (error.code === 'invalid_client') {
+        saveCredentials(withoutAnyOAuthTokens(store));
+        fs.rmSync(CLIENT_FILE, { force: true });
         throw authRequired();
       }
       throw error;
     }
   }, REFRESH_REQUEST_TIMEOUT).finally(() => {
-    pendingRefresh = null;
+    pendingRefreshes.delete(orgId);
   });
   // Callers may stop waiting before the refresh settles.
-  pendingRefresh.catch(() => {});
-  return pendingRefresh;
+  pending.catch(() => {});
+  pendingRefreshes.set(orgId, pending);
+  return pending;
 }
 
 // Bounds only how long the caller waits; the refresh itself keeps running.
@@ -385,42 +407,95 @@ function waitFor(promise, timeoutMs) {
   return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
 }
 
-async function getAccessToken(config, timeoutMs = REFRESH_TIMEOUT) {
-  const saved = loadCredentials();
-  if (saved?.type !== 'oauth' || !sameConfig(saved, config))
+async function getAccessToken(config, orgId, timeoutMs = REFRESH_TIMEOUT) {
+  const store = loadCredentials();
+  if (store?.type !== 'oauth' || !sameConfig(store, config))
     throw authRequired();
-  if (saved.accessToken && saved.expiresAt > Date.now() + REFRESH_SKEW)
-    return saved.accessToken;
-  return waitFor(refreshCredentials(config), timeoutMs);
+  const tokens = oauthTokensFor(store, orgId);
+  if (!tokens) throw authRequired();
+  if (tokens.accessToken && tokens.expiresAt > Date.now() + REFRESH_SKEW)
+    return tokens.accessToken;
+  return waitFor(refreshCredentials(config, orgId), timeoutMs);
 }
 
-// Resolves once any in-flight refresh has saved or failed, so a process that
-// exits explicitly can let the rotated tokens land first.
+// The API answered 401 for this access token. A token refreshed moments ago
+// means the organization refused us: mark it rejected so routing pauses
+// instead of using another org. An older token is just expired; force the
+// next call to refresh it.
+function reportUnauthorized(accessToken) {
+  const report = withAuthLock(async () => {
+    const store = loadCredentials();
+    if (store?.type !== 'oauth') return;
+    const entry = Object.entries(store.organizations).find(
+      ([, tokens]) => tokens.accessToken === accessToken,
+    );
+    if (!entry) return;
+    const [orgId, tokens] = entry;
+    const savedAt = Date.parse(tokens.savedAt || '') || 0;
+    if (Date.now() - savedAt < FRESH_TOKEN_MS) {
+      saveCredentials(withRejectedOAuthOrg(store, orgId));
+      return;
+    }
+    saveCredentials({
+      ...store,
+      organizations: {
+        ...store.organizations,
+        [orgId]: { ...tokens, expiresAt: 0 },
+      },
+    });
+  }, REFRESH_TIMEOUT).catch(() => {});
+  pendingReports.add(report);
+  report.finally(() => pendingReports.delete(report));
+  return report;
+}
+
+// Resolves once in-flight refreshes and 401 reports have saved or failed, so a
+// process that exits explicitly can let the rotated tokens land first.
 async function settleAuth() {
-  while (pendingRefresh) {
-    await pendingRefresh.catch(() => {});
+  while (pendingRefreshes.size || pendingReports.size) {
+    await Promise.allSettled([...pendingRefreshes.values(), ...pendingReports]);
   }
 }
 
-async function clearCredentials() {
+async function revoke(store, refreshToken, signal) {
+  await oauthRequest(issuerEndpoint(store.revocationEndpoint, store.issuer), {
+    method: 'POST',
+    signal,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: store.clientId,
+      token: refreshToken,
+      token_type_hint: 'refresh_token',
+    }),
+  });
+}
+
+// Logout. With `orgId`, only that organization's login is revoked and
+// forgotten; without it, every organization's.
+async function clearCredentials({ orgId } = {}) {
   return withAuthLock(async (remaining) => {
-    const credentials = loadCredentials();
-    if (credentials?.type === 'oauth' && credentials.refreshToken) {
-      await oauthRequest(
-        issuerEndpoint(credentials.revocationEndpoint, credentials.issuer),
-        {
-          method: 'POST',
-          signal: AbortSignal.timeout(remaining),
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: credentials.clientId,
-            token: credentials.refreshToken,
-            token_type_hint: 'refresh_token',
-          }),
-        },
-      );
+    const store = loadCredentials();
+    if (store?.type !== 'oauth') {
+      if (!orgId) fs.rmSync(CREDENTIALS_FILE, { force: true });
+      return;
     }
-    fs.rmSync(CREDENTIALS_FILE, { force: true });
+    const signal = AbortSignal.timeout(remaining);
+    const targets = orgId ? [orgId] : Object.keys(store.organizations);
+    for (const target of targets) {
+      const tokens = oauthTokensFor(store, target);
+      if (tokens) await revoke(store, tokens.refreshToken, signal);
+    }
+    if (orgId) saveCredentials(withoutOAuthOrg(store, orgId));
+    else fs.rmSync(CREDENTIALS_FILE, { force: true });
+  }, REFRESH_TIMEOUT);
+}
+
+function setDefaultOrganization(orgId) {
+  return withAuthLock(async () => {
+    const store = loadCredentials();
+    const updated = store?.type === 'oauth' && withDefaultOAuthOrg(store, orgId);
+    if (!updated) throw new Error(`Not logged in to organization ${orgId}.`);
+    saveCredentials(updated);
   }, REFRESH_TIMEOUT);
 }
 
@@ -430,13 +505,14 @@ async function startAuthFlow(
 ) {
   return withAuthLock(async (remaining) => {
     const current = loadCredentials();
-    if (
-      !force &&
-      sameConfig(current, config) &&
-      current.accessToken &&
-      current.expiresAt > Date.now() + REFRESH_SKEW
-    )
-      return current.accessToken;
+    const fresh =
+      current?.type === 'oauth' && sameConfig(current, config)
+        ? listOAuthOrgs(current)
+            .map((org) => ({ orgId: org.orgId, ...oauthTokensFor(current, org.orgId) }))
+            .find((tokens) => tokens.expiresAt > Date.now() + REFRESH_SKEW)
+        : null;
+    if (!force && fresh)
+      return { accessToken: fresh.accessToken, orgId: fresh.orgId };
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new Error('AUTH_TIMEOUT')),
@@ -509,7 +585,7 @@ async function startAuthFlow(
               });
             const code = url.searchParams.get('code');
             if (!code) throw new Error('Authorization code missing.');
-            const token = await exchangeToken(
+            const tokens = await exchangeToken(
               client,
               {
                 grant_type: 'authorization_code',
@@ -519,9 +595,25 @@ async function startAuthFlow(
               },
               controller.signal,
             );
+            // Every login is for one organization, picked on the consent
+            // screen. It is added next to the others; the first becomes the
+            // default.
+            const orgId = orgIdFromAccessToken(tokens.accessToken);
+            if (!orgId)
+              throw new Error(
+                'Supermemory did not say which organization this login is for.',
+              );
+            const saved = loadCredentials();
+            const base =
+              saved?.type === 'oauth' && sameConfig(saved, config)
+                ? { ...saved, ...client }
+                : newOAuthStore(client);
+            saveCredentials(withOAuthTokens(base, orgId, tokens));
             res
               .writeHead(200, { 'Content-Type': 'text/html' })
-              .end(authSuccessHtml, () => resolve(token));
+              .end(authSuccessHtml, () =>
+                resolve({ accessToken: tokens.accessToken, orgId }),
+              );
           } catch (error) {
             res
               .writeHead(400, { 'Content-Type': 'text/html' })
@@ -564,48 +656,73 @@ module.exports = {
   clearCredentials,
   getOAuthConfig,
   getAccessToken,
+  reportUnauthorized,
+  setDefaultOrganization,
   settleAuth,
   startAuthFlow,
   openUrl,
 };
 
-// Explicit login migrates a saved API key. Logout revokes this installation's
-// refresh token. Status never prints credentials.
+// Explicit login adds an organization (and migrates a saved API key). Logout
+// revokes every organization's refresh token, or one with `--org <id>`.
+// Status never prints credentials.
 if (require.main === module) {
   (async () => {
     const { getBaseUrl, getMcpUrl } = require('./settings');
-    const command = process.argv[2];
+    const [command, ...rest] = process.argv.slice(2);
+    const flag = (name) => {
+      const index = rest.indexOf(name);
+      return index >= 0 ? rest[index + 1] : undefined;
+    };
     if (command === 'login') {
-      await startAuthFlow(getOAuthConfig(getBaseUrl(), getMcpUrl()), {
-        force: true,
-        timeoutMs: 5 * 60 * 1000,
-      });
-      console.log('Supermemory connected through OAuth.');
+      const { orgId } = await startAuthFlow(
+        getOAuthConfig(getBaseUrl(), getMcpUrl()),
+        { force: true, timeoutMs: 5 * 60 * 1000 },
+      );
+      console.log(`Supermemory connected through OAuth (organization ${orgId}).`);
     } else if (command === 'logout') {
-      await clearCredentials();
-      console.log('Supermemory disconnected.');
+      const orgId = flag('--org');
+      await clearCredentials({ orgId });
+      console.log(
+        orgId
+          ? `Supermemory disconnected from organization ${orgId}.`
+          : 'Supermemory disconnected.',
+      );
+    } else if (command === 'use') {
+      if (!rest[0]) throw new Error('Usage: node auth.js use <organization-id>');
+      await setDefaultOrganization(rest[0]);
+      console.log(`Default organization: ${rest[0]}.`);
     } else if (command === 'status') {
       const credentials = loadCredentials();
+      const oauth = credentials?.type === 'oauth';
       console.log(
         JSON.stringify(
           {
-            authentication:
-              credentials?.type === 'oauth'
-                ? 'oauth'
-                : credentials?.apiKey
-                  ? 'api_key'
-                  : 'none',
+            authentication: oauth
+              ? 'oauth'
+              : credentials?.apiKey
+                ? 'api_key'
+                : 'none',
             clientId: credentials?.clientId,
-            expiresAt: credentials?.expiresAt,
+            organizations: oauth
+              ? listOAuthOrgs(credentials).map((org) => ({
+                  id: org.orgId,
+                  default: org.isDefault,
+                  rejected: org.rejected,
+                  expiresAt: credentials.organizations[org.orgId].expiresAt,
+                }))
+              : undefined,
             reauthenticationRequired:
-              credentials?.type === 'oauth' && !credentials.refreshToken,
+              oauth && listOAuthOrgs(credentials).length === 0,
           },
           null,
           2,
         ),
       );
     } else {
-      throw new Error('Usage: node auth.js <login|logout|status>');
+      throw new Error(
+        'Usage: node auth.js <login|logout [--org <id>]|use <id>|status>',
+      );
     }
   })().catch((error) => {
     console.error(error.message);

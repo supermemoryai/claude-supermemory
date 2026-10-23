@@ -9,13 +9,14 @@ const {
   loadSettings,
   getAuthToken,
   getBaseUrl,
-  getMcpUrl,
   getApiVersion,
   debugLog,
+  loginForDirectory,
+  routeDirectory,
+  claimOrgLoginPrompt,
 } = require('./lib/settings');
 const { BRAND, MARK, bold, gray } = require('./lib/colors');
 const { readStdin, writeOutput } = require('./lib/stdin');
-const { startAuthFlow, getOAuthConfig } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
 const {
@@ -179,30 +180,64 @@ async function main() {
 
     const authStartedAt = Date.now();
     let apiKey;
+    const routeNotices = [];
     try {
       apiKey = await getAuthToken(cwd, projectConfig);
+      routeNotices.push(...routeDirectory(cwd).notices);
     } catch (error) {
-      if (error.code !== 'AUTH_REQUIRED') throw error;
-      try {
-        apiKey = await startAuthFlow(
-          getOAuthConfig(
-            getBaseUrl(cwd, projectConfig),
-            getMcpUrl(cwd, projectConfig),
-          ),
-          { timeoutMs: Math.max(1, 25000 - (Date.now() - authStartedAt)) },
-        );
-      } catch (authErr) {
+      // Not logged in, or not logged in to the org this directory belongs to:
+      // open the consent screen so the user can add it.
+      if (error.code !== 'AUTH_REQUIRED' && error.code !== 'ORG_PAUSED')
+        throw error;
+      if (error.code === 'ORG_PAUSED' && !claimOrgLoginPrompt(error.route)) {
         writeState(sessionId, 'context', {
           status: 'error',
           memoryItemsLoaded: 0,
         });
         output(
           `<supermemory-status>
-${authErr.message === 'AUTH_TIMEOUT' ? 'Authentication timed out. Start a new session to retry login.' : 'Authentication failed. Start a new session to retry login.'}
+${error.message}
+For an explicit login, run: node "${path.join(__dirname, 'lib/auth.js')}" login
+</supermemory-status>`,
+          [`${MARK} ${error.message}`, captureFailureNotice()?.systemMessage],
+        );
+        return;
+      }
+      try {
+        const login = await loginForDirectory(
+          cwd,
+          projectConfig,
+          Math.max(1, 25000 - (Date.now() - authStartedAt)),
+        );
+        apiKey = login.apiKey;
+        routeNotices.push(...login.notices);
+      } catch (authErr) {
+        writeState(sessionId, 'context', {
+          status: 'error',
+          memoryItemsLoaded: 0,
+        });
+        const reason =
+          authErr.code === 'ORG_PAUSED'
+            ? authErr.message
+            : authErr.message === 'AUTH_TIMEOUT'
+              ? 'Authentication timed out. Start a new session to retry login.'
+              : 'Authentication failed. Start a new session to retry login.';
+        output(
+          `<supermemory-status>
+${reason}
 For an explicit login, run: node "${path.join(__dirname, 'lib/auth.js')}" login
 Or set the SUPERMEMORY_CC_API_KEY environment variable.
 </supermemory-status>`,
-          [captureFailureNotice()?.systemMessage],
+          [
+            // A paused directory stays paused when its login fails or times
+            // out; say why, not just that login failed.
+            authErr.code === 'ORG_PAUSED'
+              ? `${MARK} ${authErr.message}`
+              : error.code === 'ORG_PAUSED'
+                ? `${MARK} ${error.message}`
+                : null,
+            captureFailureNotice()?.systemMessage,
+          ],
         );
         return;
       }
@@ -275,6 +310,7 @@ Memories will be saved as you work.
 </supermemory-context>`)),
       [
         captureNotice?.systemMessage,
+        ...routeNotices.map((notice) => `${MARK} ${notice}`),
         [memoryNotice, welcomeBackNotice(namespace)]
           .filter(Boolean)
           .join(gray(' · ')) || null,

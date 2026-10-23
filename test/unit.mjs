@@ -3,6 +3,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
+  readFileSync,
   mkdirSync,
   readdirSync,
   rmSync,
@@ -994,5 +995,355 @@ describe('statusline rendering', () => {
       getStatusLabel({ context: { ...context, memoryItemsLoaded: 0 } }, now),
       'ready',
     );
+  });
+});
+
+describe('oauth organizations', () => {
+  function jwt(claims) {
+    const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    return `${encode({ alg: 'EdDSA' })}.${encode(claims)}.sig`;
+  }
+
+  function oauthHome(t, stubUrl, organizations, extra = {}) {
+    const home = makeTempDir(t, 'oauth-home');
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({
+        type: 'oauth',
+        apiBaseUrl: stubUrl,
+        issuer: `${stubUrl}/api/auth`,
+        resource: `${stubUrl}/mcp`,
+        clientId: 'client_claude',
+        tokenEndpoint: `${stubUrl}/api/auth/oauth2/token`,
+        revocationEndpoint: `${stubUrl}/api/auth/oauth2/revoke`,
+        ...(organizations ? { version: 2, organizations } : {}),
+        ...extra,
+      }),
+    );
+    return home;
+  }
+
+  function routeAcmeTo(home, organization) {
+    mkdirSync(join(home, '.supermemory'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory', 'config.json'),
+      JSON.stringify({ projects: [{ match: { repo: 'github.com/acme/*' }, organization }] }),
+    );
+  }
+
+  function readCredentials(home) {
+    return JSON.parse(
+      readFileSync(join(home, '.supermemory-claude', 'credentials.json'), 'utf-8'),
+    );
+  }
+
+  const fresh = () => Date.now() + 3_600_000;
+  const company = jwt({ sub: 'u1', organization_id: 'org_company' });
+  const personal = jwt({ sub: 'u1', organization_id: 'org_personal' });
+
+  function runProxy(env, lines, cwd) {
+    return new Promise((resolve, reject) => {
+      const child = spawn('node', [join(HOOKS_DIR, 'mcp-proxy.js')], {
+        env: { ...process.env, SUPERMEMORY_CC_API_KEY: '', ...env },
+        cwd,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let stdout = '';
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+      child.on('error', reject);
+      child.on('close', () =>
+        resolve(stdout.trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))),
+      );
+      for (const line of lines) child.stdin.write(`${JSON.stringify(line)}\n`);
+      child.stdin.end();
+    });
+  }
+
+  const envFor = (home, stub) => ({
+    HOME: home,
+    USERPROFILE: home,
+    SUPERMEMORY_API_URL: stub.url,
+    SUPERMEMORY_MCP_URL: `${stub.url}/mcp`,
+    SUPERMEMORY_CC_API_KEY: '',
+  });
+
+  const mcpOk = (record, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    const { id } = JSON.parse(record.body);
+    res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { ok: true } }));
+  };
+
+  test('reads a v1 single login under its org and routes a matching repo to it', async (t) => {
+    const { repo } = makeRepo(t);
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ profile: { static: [], dynamic: [] } }));
+    });
+    const home = oauthHome(t, stub.url, null, {
+      accessToken: company,
+      refreshToken: 'rt_company',
+      expiresAt: fresh(),
+    });
+    routeAcmeTo(home, 'org_company');
+
+    const { code } = await runHook(
+      'session-start.js',
+      { session_id: 'sess-v1', cwd: repo },
+      envFor(home, stub),
+    );
+    assert.equal(code, 0);
+    assert.equal(stub.requests[0].headers.authorization, `Bearer ${company}`);
+  });
+
+  test('uses each directory\'s org when one plugin holds two logins', async (t) => {
+    const { repo, home: plainDir } = makeRepo(t);
+    const stub = await startStubServer(t, mcpOk);
+    const home = oauthHome(t, stub.url, {
+      org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: fresh() },
+      org_company: { accessToken: company, refreshToken: 'rt_c', expiresAt: fresh() },
+    }, { defaultOrganization: 'org_personal' });
+    routeAcmeTo(home, 'org_company');
+
+    await runProxy(envFor(home, stub), [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }], repo);
+    await runProxy(envFor(home, stub), [{ jsonrpc: '2.0', id: 2, method: 'tools/list' }], plainDir);
+    assert.equal(stub.requests[0].headers.authorization, `Bearer ${company}`);
+    assert.equal(stub.requests[1].headers.authorization, `Bearer ${personal}`);
+  });
+
+  test('pauses a company repo when only personal is logged in, and sends nothing', async (t) => {
+    const { repo } = makeRepo(t);
+    const stub = await startStubServer(t, mcpOk);
+    const home = oauthHome(t, stub.url, {
+      org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: fresh() },
+    }, { defaultOrganization: 'org_personal' });
+    routeAcmeTo(home, 'org_company');
+
+    const messages = await runProxy(
+      envFor(home, stub),
+      [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }],
+      repo,
+    );
+    assert.equal(messages[0].error.code, -32001);
+    assert.match(messages[0].error.message, /paused/);
+    assert.equal(stub.requests.length, 0);
+  });
+
+  test('refreshes only the routed org and keeps the other login', async (t) => {
+    const { repo } = makeRepo(t);
+    const rotated = jwt({ sub: 'u1', organization_id: 'org_company', n: 2 });
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (record.url === '/api/auth/oauth2/token') {
+        res.end(JSON.stringify({
+          access_token: rotated,
+          refresh_token: 'rt_c2',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }));
+        return;
+      }
+      mcpOk(record, res);
+    });
+    const home = oauthHome(t, stub.url, {
+      org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: fresh() },
+      org_company: { accessToken: company, refreshToken: 'rt_c', expiresAt: 0 },
+    }, { defaultOrganization: 'org_personal' });
+    routeAcmeTo(home, 'org_company');
+
+    await runProxy(envFor(home, stub), [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }], repo);
+    assert.match(stub.requests[0].body, /refresh_token=rt_c(&|$)/);
+    assert.equal(stub.requests[1].headers.authorization, `Bearer ${rotated}`);
+    const saved = readCredentials(home);
+    assert.equal(saved.organizations.org_company.refreshToken, 'rt_c2');
+    assert.equal(saved.organizations.org_personal.refreshToken, 'rt_p');
+  });
+
+  test('a revoked grant removes only that org', async (t) => {
+    const { repo } = makeRepo(t);
+    const stub = await startStubServer(t, (record, res) => {
+      res.statusCode = 400;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'invalid_grant' }));
+    });
+    const home = oauthHome(t, stub.url, {
+      org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: fresh() },
+      org_company: { accessToken: company, refreshToken: 'rt_c', expiresAt: 0 },
+    }, { defaultOrganization: 'org_personal' });
+    routeAcmeTo(home, 'org_company');
+
+    const messages = await runProxy(
+      envFor(home, stub),
+      [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }],
+      repo,
+    );
+    assert.equal(messages[0].error.code, -32001);
+    const saved = readCredentials(home);
+    assert.equal(saved.organizations.org_company, undefined);
+    assert.equal(saved.organizations.org_personal.refreshToken, 'rt_p');
+  });
+
+  test('a 401 on a fresh token marks that org rejected and pauses it', async (t) => {
+    const { repo } = makeRepo(t);
+    const stub = await startStubServer(t, (record, res) => {
+      res.statusCode = 401;
+      res.end('{}');
+    });
+    const home = oauthHome(t, stub.url, {
+      org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: fresh() },
+      org_company: {
+        accessToken: company,
+        refreshToken: 'rt_c',
+        expiresAt: fresh(),
+        savedAt: new Date().toISOString(),
+      },
+    }, { defaultOrganization: 'org_personal' });
+    routeAcmeTo(home, 'org_company');
+    const env = envFor(home, stub);
+
+    await runProxy(env, [{ jsonrpc: '2.0', id: 1, method: 'tools/list' }], repo);
+    assert.ok(readCredentials(home).organizations.org_company.rejectedAt);
+
+    const before = stub.requests.length;
+    const messages = await runProxy(env, [{ jsonrpc: '2.0', id: 2, method: 'tools/list' }], repo);
+    assert.match(messages[0].error.message, /rejected/);
+    assert.equal(stub.requests.length, before);
+  });
+
+  test('logout --org revokes one org; status lists organizations without tokens', async (t) => {
+    const stub = await startStubServer(t, (record, res) => res.end('{}'));
+    const home = oauthHome(t, stub.url, {
+      org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: fresh() },
+      org_company: { accessToken: company, refreshToken: 'rt_c', expiresAt: fresh() },
+    }, { defaultOrganization: 'org_personal' });
+    const env = { ...process.env, ...envFor(home, stub) };
+    const auth = join(HOOKS_DIR, 'lib', 'auth.js');
+
+    // Async: the stub server runs in this process, so a blocking spawn would starve it.
+    const run = (args) =>
+      new Promise((resolve, reject) => {
+        const child = spawn('node', [auth, ...args], { env });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk;
+        });
+        child.on('error', reject);
+        child.on('close', (status) => resolve({ status, stdout, stderr }));
+      });
+    const logout = await run(['logout', '--org', 'org_company']);
+    assert.equal(logout.status, 0, logout.stderr);
+    assert.match(stub.requests[0].body, /token=rt_c/);
+    assert.deepEqual(Object.keys(readCredentials(home).organizations), ['org_personal']);
+
+    const status = await run(['status']);
+    const report = JSON.parse(status.stdout);
+    assert.deepEqual(report.organizations.map((org) => org.id), ['org_personal']);
+    assert.ok(!status.stdout.includes('rt_p'));
+    assert.ok(!status.stdout.includes(personal));
+  });
+});
+
+describe('oauth organizations: session start', () => {
+  test('a paused repo shows why, without opening a browser again within 12 hours', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const stub = await startStubServer(t, (record, res) => res.end('{}'));
+    const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const personal = `${encode({})}.${encode({ organization_id: 'org_personal' })}.sig`;
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({
+        type: 'oauth',
+        version: 2,
+        apiBaseUrl: stub.url,
+        issuer: `${stub.url}/api/auth`,
+        resource: `${stub.url}/mcp`,
+        clientId: 'client_claude',
+        defaultOrganization: 'org_personal',
+        organizations: {
+          org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: Date.now() + 3_600_000 },
+        },
+      }),
+    );
+    mkdirSync(join(home, '.supermemory'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory', 'config.json'),
+      JSON.stringify({ projects: [{ match: { repo: 'github.com/acme/*' }, organization: 'org_company' }] }),
+    );
+    // A prompt for this org was already shown recently.
+    writeFileSync(
+      join(home, '.supermemory-claude', 'org-login-prompts.json'),
+      JSON.stringify({ 'rule:repo github.com/acme/* -> org_company': Date.now() }),
+    );
+
+    const { code, stdout } = await runHook(
+      'session-start.js',
+      { session_id: 'sess-paused', cwd: repo },
+      {
+        HOME: home,
+        USERPROFILE: home,
+        SUPERMEMORY_API_URL: stub.url,
+        SUPERMEMORY_MCP_URL: `${stub.url}/mcp`,
+        SUPERMEMORY_CC_API_KEY: '',
+      },
+    );
+    assert.equal(code, 0);
+    const output = JSON.parse(stdout);
+    assert.match(output.hookSpecificOutput.additionalContext, /paused/);
+    assert.match(plain(output.systemMessage), /org_company/);
+    assert.equal(stub.requests.length, 0);
+  });
+});
+
+describe('oauth organizations: failed login while paused', () => {
+  test('a paused repo whose login fails still says why it is paused', async (t) => {
+    const { repo, home } = makeRepo(t);
+    // Discovery returns nothing useful, so the login fails before any browser opens.
+    const stub = await startStubServer(t, (record, res) => res.end('{}'));
+    const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const personal = `${encode({})}.${encode({ organization_id: 'org_personal' })}.sig`;
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({
+        type: 'oauth',
+        version: 2,
+        apiBaseUrl: stub.url,
+        issuer: `${stub.url}/api/auth`,
+        resource: `${stub.url}/mcp`,
+        clientId: 'client_claude',
+        defaultOrganization: 'org_personal',
+        organizations: {
+          org_personal: { accessToken: personal, refreshToken: 'rt_p', expiresAt: Date.now() + 3_600_000 },
+        },
+      }),
+    );
+    mkdirSync(join(home, '.supermemory'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory', 'config.json'),
+      JSON.stringify({ projects: [{ match: { repo: 'github.com/acme/*' }, organization: 'org_company' }] }),
+    );
+
+    const { code, stdout } = await runHook(
+      'session-start.js',
+      { session_id: 'sess-paused-fail', cwd: repo },
+      {
+        HOME: home,
+        USERPROFILE: home,
+        SUPERMEMORY_API_URL: stub.url,
+        SUPERMEMORY_MCP_URL: `${stub.url}/mcp`,
+        SUPERMEMORY_CC_API_KEY: '',
+      },
+    );
+    assert.equal(code, 0);
+    const output = JSON.parse(stdout);
+    assert.match(plain(output.systemMessage), /org_company/);
+    assert.match(plain(output.systemMessage), /paused/);
   });
 });

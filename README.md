@@ -174,6 +174,38 @@ API key precedence is `SUPERMEMORY_CC_API_KEY`, project `apiKey`, then
 | `namespace` | Canonical project scope, preserving the exact old container-tag value. |
 | `repoContainerTag` | Override the unified project container tag. Checked before `SUPERMEMORY_REPO_TAG`. |
 
+### Several organizations
+
+Each OAuth login is for one organization, picked on the consent screen. Log in
+again to add another; the first one stays the default.
+
+```bash
+node plugin/hooks/lib/auth.js login             # add an organization
+node plugin/hooks/lib/auth.js status            # list them (no secrets)
+node plugin/hooks/lib/auth.js use <org-id>      # change the default
+node plugin/hooks/lib/auth.js logout --org <id> # forget one organization
+```
+
+Which one a directory uses comes from the rules every Supermemory agent shares:
+`SUPERMEMORY_ORG`, `projects` rules in `~/.supermemory/config.json`, the
+repository's committed `.supermemory/config.json`, then the default. For
+example, to send every repo of a GitHub org to your team:
+
+```json
+{
+  "projects": [
+    { "match": { "repo": "github.com/acme/*" }, "organization": "<team-org-id>" }
+  ]
+}
+```
+
+If a directory belongs to an organization this plugin isn't logged in to, or
+whose login the API rejected, memory is paused there: nothing is saved or
+recalled, and no other organization is used instead. Session start opens the
+consent screen so you can add it, at most every 12 hours per organization.
+Logging in from inside a repository that has no rule yet binds it to the
+organization you picked.
+
 ### Advanced self-hosted compatibility
 
 Hosted Supermemory uses v5 without a version choice. Existing custom REST URLs

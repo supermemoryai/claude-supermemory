@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 const readline = require('node:readline');
 const { getContainerTag } = require('./lib/container-tag');
-const { settleAuth } = require('./lib/auth');
+const { reportUnauthorized, settleAuth } = require('./lib/auth');
 const { getAuthToken, getMcpUrl } = require('./lib/settings');
 const REQUEST_TIMEOUT_MS = 30000;
 
@@ -84,6 +84,7 @@ async function forward(message, apiKey) {
   if (newSessionId) sessionId = newSessionId;
 
   if (response.status === 202) return;
+  if (response.status === 401) await reportUnauthorized(apiKey);
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     sendError(
@@ -134,6 +135,11 @@ async function main() {
         injectRepoContainerTag(message, repoContainerTag);
         await forward(message, apiKey);
       } catch (err) {
+        if (err.code === 'ORG_PAUSED') {
+          sessionId = null;
+          sendError(message.id, -32001, `Supermemory is paused here: ${err.message}`);
+          return;
+        }
         if (err.code === 'AUTH_REQUIRED') {
           sessionId = null;
           sendError(

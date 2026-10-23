@@ -1,3 +1,4 @@
+const { reportUnauthorized } = require('./auth');
 const { resolveApiVersion } = require('./settings');
 
 const AGENT_SUPPORTING_CONTEXT = `Shared coding-agent memory for one software repository.
@@ -42,6 +43,7 @@ async function post(
     signal: AbortSignal.timeout(timeoutMs),
   });
 
+  if (response.status === 401) await reportUnauthorized(apiKey);
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw Object.assign(
@@ -69,10 +71,21 @@ function useV5(baseUrl, options, namespace) {
   return true;
 }
 
+// A 401 tells the auth layer which OAuth org refused us, so routing can pause
+// that org instead of retrying it forever.
+function reportingFetch(apiKey) {
+  return async (...args) => {
+    const response = await fetch(...args);
+    if (response.status === 401) await reportUnauthorized(apiKey);
+    return response;
+  };
+}
+
 function sdkClient(baseUrl, apiKey, options) {
   const { Supermemory } = require('../vendor/supermemory.cjs');
   return new Supermemory({
     apiKey,
+    fetch: reportingFetch(apiKey),
     baseUrl: baseUrl.replace(/\/+$/, ''),
     headers: { 'x-sm-source': 'claude-code' },
     timeoutInSeconds: (options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000,

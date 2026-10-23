@@ -2,7 +2,12 @@ const { getProfile } = require('./lib/api');
 const { getNamespace } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const { loadCredentials, settleAuth } = require('./lib/auth');
-const { getAuthToken, getBaseUrl, getApiVersion } = require('./lib/settings');
+const {
+  getAuthToken,
+  getBaseUrl,
+  getApiVersion,
+  routeDirectory,
+} = require('./lib/settings');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 
 async function main() {
@@ -23,10 +28,17 @@ async function main() {
   let apiKey;
   try {
     apiKey = await getAuthToken(cwd, projectConfig, 8000);
-  } catch {
+  } catch (error) {
     console.log(
       JSON.stringify({
         authenticated: false,
+        ...(error.code === 'ORG_PAUSED'
+          ? {
+              paused: true,
+              organization: error.route?.orgId ?? null,
+              reason: error.message,
+            }
+          : {}),
         namespace,
         apiOrigin,
         apiVersion,
@@ -34,6 +46,8 @@ async function main() {
     );
     return;
   }
+  const organization =
+    keySource === 'oauth' ? routeDirectory(cwd).orgId : undefined;
   try {
     await getProfile(baseUrl, apiKey, namespace, undefined, {
       apiVersion,
@@ -43,6 +57,7 @@ async function main() {
       JSON.stringify({
         authenticated: true,
         keySource,
+        organization,
         namespace,
         apiOrigin,
         apiVersion,
@@ -55,6 +70,7 @@ async function main() {
       JSON.stringify({
         authenticated: httpStatus === 401 ? false : null,
         keySource,
+        organization,
         namespace: err?.code === 'INVALID_NAMESPACE' ? null : namespace,
         apiOrigin,
         apiVersion,
