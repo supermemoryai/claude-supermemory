@@ -1,7 +1,8 @@
 const { getProfile } = require('./lib/api');
 const { getNamespace } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
-const { getApiKey, getBaseUrl, getApiVersion } = require('./lib/settings');
+const { loadCredentials, settleAuth } = require('./lib/auth');
+const { getAuthToken, getBaseUrl, getApiVersion } = require('./lib/settings');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 
 async function main() {
@@ -11,14 +12,17 @@ async function main() {
   const baseUrl = getBaseUrl(cwd, projectConfig);
   const apiOrigin = new URL(baseUrl).origin;
   const apiVersion = getApiVersion(cwd, projectConfig);
+  const saved = loadCredentials();
   const keySource = process.env.SUPERMEMORY_CC_API_KEY
     ? 'SUPERMEMORY_CC_API_KEY'
     : projectConfig?.apiKey
       ? 'project config'
-      : 'credentials.json';
+      : saved?.type === 'oauth'
+        ? 'oauth'
+        : 'credentials.json';
   let apiKey;
   try {
-    apiKey = getApiKey(cwd, projectConfig);
+    apiKey = await getAuthToken(cwd, projectConfig, 8000);
   } catch {
     console.log(
       JSON.stringify({
@@ -64,6 +68,8 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.log(JSON.stringify({ error: getUserFriendlyError(err) }));
-});
+main()
+  .catch((err) => {
+    console.log(JSON.stringify({ error: getUserFriendlyError(err) }));
+  })
+  .finally(settleAuth);
