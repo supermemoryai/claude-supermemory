@@ -10,6 +10,9 @@ const {
 } = require('./settings');
 
 const MAX_TOOL_RESULT_LENGTH = 500;
+// Tool results that hold the user's own words are kept whole: an
+// AskUserQuestion result is the user's answer, often the decision of the session.
+const UNTRUNCATED_TOOL_RESULTS = new Set(['AskUserQuestion']);
 const TRACKER_DIR = path.join(os.homedir(), '.supermemory-claude', 'trackers');
 
 let toolUseMap = new Map();
@@ -228,10 +231,10 @@ function formatUserMessage(message) {
         if (!shouldIncludeTool(toolName, currentIncludeList)) {
           continue;
         }
-        const resultContent = truncate(
-          cleanContent(block.content || ''),
-          MAX_TOOL_RESULT_LENGTH,
-        );
+        const cleanedResult = cleanContent(block.content || '');
+        const resultContent = UNTRUNCATED_TOOL_RESULTS.has(toolName)
+          ? cleanedResult
+          : truncate(cleanedResult, MAX_TOOL_RESULT_LENGTH);
         const status = block.is_error ? 'error' : 'success';
         if (resultContent) {
           parts.push(
