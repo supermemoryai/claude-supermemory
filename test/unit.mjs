@@ -528,6 +528,44 @@ describe('capture hook', () => {
     });
   }
 
+  test('captures included tool results that arrive as content blocks', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+    writeFileSync(join(home, '.supermemory-claude', 'settings.json'),
+      JSON.stringify({ includeTools: ['Agent'] }));
+    const transcript = join(makeTempDir(t, 'block-result'), 'session.jsonl');
+    const entries = [
+      { type: 'user', uuid: 'u1', timestamp: '2026-10-24T07:00:00Z',
+        message: { content: 'Find where the retry budget is configured.' } },
+      { type: 'assistant', uuid: 'a1', message: { content: [
+        { type: 'tool_use', id: 'g1', name: 'Agent', input: { prompt: 'Find the retry budget.' } },
+      ] } },
+      { type: 'user', uuid: 'u2', message: { content: [
+        { type: 'tool_result', tool_use_id: 'g1', content: [
+          { type: 'text', text: 'The retry budget lives in config/retry.json.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+        ] },
+      ] } },
+    ];
+    writeFileSync(transcript, entries.map((entry) => JSON.stringify(entry)).join('\n'));
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ id: 'doc_blocks', status: 'queued' }));
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const input = { session_id: 'block-result', cwd: repo, transcript_path: transcript,
+      last_assistant_message: 'The retry budget is configured in config/retry.json.' };
+    assert.equal((await runHook('capture.js', input, env)).code, 0);
+    assert.equal(stub.requests.length, 1);
+    const { content } = JSON.parse(stub.requests[0].body);
+    assert.ok(content.includes(
+      '<|start|>assistant:tool_result<|message|>Agent(success): The retry budget lives in config/retry.json.<|end|>',
+    ), 'the Agent tool result was dropped');
+    assert.ok(!content.includes('iVBORw0KGgo'));
+  });
+
   test('saves the transcript delta with scope metadata and entity context', async (t) => {
     const { repo, home } = makeRepo(t);
     mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
