@@ -1,17 +1,7 @@
-const { execFile } = require('node:child_process');
-const http = require('node:http');
+const { execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-
-const authSuccessHtml = fs.readFileSync(
-  path.join(__dirname, '../templates/auth-success.html'),
-  'utf-8',
-);
-const authErrorHtml = fs.readFileSync(
-  path.join(__dirname, '../templates/auth-error.html'),
-  'utf-8',
-);
 
 const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
@@ -19,7 +9,9 @@ const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
 const AUTH_BASE_URL =
   process.env.SUPERMEMORY_AUTH_URL || 'https://console.supermemory.ai/auth/connect';
 const AUTH_PORT = 19876;
-const AUTH_TIMEOUT = 25000;
+const AUTH_WAIT_MS = 5 * 60 * 1000;
+const HOOK_WAIT_MS = 20000;
+const POLL_MS = 500;
 
 function execFileAsync(command, args) {
   return new Promise((resolve, reject) => {
@@ -85,62 +77,42 @@ function clearCredentials() {
   } catch {}
 }
 
+// The SessionStart hook is killed at 30s, so the callback server runs detached and outlives it.
 function startAuthFlow() {
+  const child = spawn(
+    process.execPath,
+    [path.join(__dirname, '../auth-server.js')],
+    { detached: true, stdio: 'ignore', windowsHide: true },
+  );
+  child.unref();
+
   return new Promise((resolve, reject) => {
-    let resolved = false;
-
-    const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://localhost:${AUTH_PORT}`);
-
-      if (url.pathname === '/callback') {
-        const apiKey =
-          url.searchParams.get('apikey') || url.searchParams.get('api_key');
-
-        if (apiKey?.startsWith('sm_')) {
-          saveCredentials(apiKey);
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(authSuccessHtml);
-          resolved = true;
-          server.close();
-          resolve(apiKey);
-        } else {
-          res.writeHead(400, { 'Content-Type': 'text/html' });
-          res.end(authErrorHtml);
-        }
-      } else {
-        res.writeHead(404);
-        res.end('Not found');
-      }
+    const startedAt = Date.now();
+    const fail = () => {
+      clearInterval(timer);
+      reject(new Error('AUTH_FAILED'));
+    };
+    child.on('error', fail);
+    child.on('exit', (code) => {
+      if (code !== 0) fail();
     });
-
-    server.listen(AUTH_PORT, '127.0.0.1', () => {
-      const callbackUrl = `http://localhost:${AUTH_PORT}/callback`;
-      const authUrl = `${AUTH_BASE_URL}?callback=${encodeURIComponent(callbackUrl)}&client=claude_code`;
-      openUrl(authUrl).catch((error) => {
-        if (!resolved) {
-          server.close();
-          reject(new Error(`Failed to open browser: ${error.message}`));
-        }
-      });
-    });
-
-    server.on('error', (err) => {
-      if (!resolved) {
-        reject(new Error(`Failed to start auth server: ${err.message}`));
+    const timer = setInterval(() => {
+      const credentials = loadCredentials();
+      if (credentials) {
+        clearInterval(timer);
+        resolve(credentials.apiKey);
+      } else if (Date.now() - startedAt > HOOK_WAIT_MS) {
+        clearInterval(timer);
+        reject(new Error('AUTH_PENDING'));
       }
-    });
-
-    setTimeout(() => {
-      if (!resolved) {
-        server.close();
-        reject(new Error('AUTH_TIMEOUT'));
-      }
-    }, AUTH_TIMEOUT);
+    }, POLL_MS);
   });
 }
 
 module.exports = {
   AUTH_BASE_URL,
+  AUTH_PORT,
+  AUTH_WAIT_MS,
   CREDENTIALS_FILE,
   loadCredentials,
   saveCredentials,

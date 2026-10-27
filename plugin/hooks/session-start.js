@@ -189,7 +189,7 @@ async function main() {
         });
         output(
           `<supermemory-status>
-${authErr.message === 'AUTH_TIMEOUT' ? 'Authentication timed out. Please complete login in the browser window.' : 'Authentication failed.'}
+${authErr.message === 'AUTH_PENDING' ? 'Finish connecting Supermemory in the browser window (you have 5 minutes). Memory turns on from your next message.' : 'Authentication failed.'}
 If the browser did not open, visit: ${AUTH_BASE_URL}
 Or set the SUPERMEMORY_CC_API_KEY environment variable.
 </supermemory-status>`,
