@@ -207,7 +207,7 @@ For an explicit login, run: node "${path.join(__dirname, 'lib/auth.js')}" login
         const login = await loginForDirectory(
           cwd,
           projectConfig,
-          Math.max(1, 25000 - (Date.now() - authStartedAt)),
+          Math.max(1, 20000 - (Date.now() - authStartedAt)),
         );
         apiKey = login.apiKey;
         routeNotices.push(...login.notices);
@@ -219,18 +219,18 @@ For an explicit login, run: node "${path.join(__dirname, 'lib/auth.js')}" login
         const reason =
           authErr.code === 'ORG_PAUSED'
             ? authErr.message
-            : authErr.message === 'AUTH_TIMEOUT'
-              ? 'Authentication timed out. Start a new session to retry login.'
+            : authErr.message === 'AUTH_PENDING'
+              ? 'Finish connecting Supermemory in the browser window (you have 5 minutes). Memory turns on from your next message.'
               : 'Authentication failed. Start a new session to retry login.';
         output(
           `<supermemory-status>
 ${reason}
-For an explicit login, run: node "${path.join(__dirname, 'lib/auth.js')}" login
+If the browser did not open, run: node "${path.join(__dirname, 'lib/auth.js')}" login
 Or set the SUPERMEMORY_CC_API_KEY environment variable.
 </supermemory-status>`,
           [
-            // A paused directory stays paused when its login fails or times
-            // out; say why, not just that login failed.
+            // A paused directory stays paused when its login fails or is still
+            // pending; say why, not just that login failed.
             authErr.code === 'ORG_PAUSED'
               ? `${MARK} ${authErr.message}`
               : error.code === 'ORG_PAUSED'

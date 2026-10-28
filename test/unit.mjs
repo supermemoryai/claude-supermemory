@@ -1347,3 +1347,73 @@ describe('oauth organizations: failed login while paused', () => {
     assert.match(plain(output.systemMessage), /paused/);
   });
 });
+
+describe('oauth organizations: background login from session start', () => {
+  test('a first login in an unrouted repo adds the org, binds the repo and loads memory', async (t) => {
+    const { repo, home } = makeRepo(t);
+    const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const company = `${encode({ alg: 'EdDSA' })}.${encode({ sub: 'u1', organization_id: 'org_company' })}.sig`;
+    let issuer;
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (record.url === '/.well-known/oauth-authorization-server') {
+        res.end(JSON.stringify({
+          issuer,
+          authorization_endpoint: `${issuer}/oauth2/authorize`,
+          token_endpoint: `${issuer}/oauth2/token`,
+          registration_endpoint: `${issuer}/oauth2/register`,
+          revocation_endpoint: `${issuer}/oauth2/revoke`,
+        }));
+      } else if (record.url === '/api/auth/oauth2/register') {
+        res.end(JSON.stringify({ client_id: 'client_claude', token_endpoint_auth_method: 'none' }));
+      } else if (record.url === '/api/auth/oauth2/token') {
+        res.end(JSON.stringify({
+          access_token: company,
+          refresh_token: 'rt_company',
+          token_type: 'Bearer',
+          expires_in: 3600,
+        }));
+      } else {
+        res.end(JSON.stringify({ profile: { static: ['Ships on Fridays'], dynamic: [] } }));
+      }
+    });
+    issuer = `${stub.url}/api/auth`;
+
+    // Plays the browser: approve the consent screen by calling the redirect URI.
+    const bin = makeTempDir(t, 'fake-browser');
+    const browser = `#!/bin/sh
+node -e 'const u = new URL(process.argv[1]); const r = new URL(u.searchParams.get("redirect_uri")); r.searchParams.set("code", "code123"); r.searchParams.set("state", u.searchParams.get("state")); fetch(r).catch(() => {})' "$1"
+`;
+    for (const name of ['open', 'xdg-open']) {
+      writeFileSync(join(bin, name), browser, { mode: 0o755 });
+    }
+
+    const { code, stdout } = await runHook(
+      'session-start.js',
+      { session_id: 'sess-first-login', cwd: repo },
+      {
+        HOME: home,
+        USERPROFILE: home,
+        PATH: `${bin}:${process.env.PATH}`,
+        SUPERMEMORY_API_URL: stub.url,
+        SUPERMEMORY_MCP_URL: `${stub.url}/mcp`,
+        SUPERMEMORY_CC_API_KEY: '',
+      },
+    );
+    assert.equal(code, 0);
+    const output = JSON.parse(stdout);
+    assert.match(output.hookSpecificOutput.additionalContext, /Ships on Fridays/);
+    assert.match(plain(output.systemMessage), /now uses organization org_company/);
+
+    const saved = JSON.parse(
+      readFileSync(join(home, '.supermemory-claude', 'credentials.json'), 'utf-8'),
+    );
+    assert.equal(saved.version, 2);
+    assert.equal(saved.defaultOrganization, 'org_company');
+    assert.equal(saved.organizations.org_company.refreshToken, 'rt_company');
+    const rules = JSON.parse(readFileSync(join(home, '.supermemory', 'config.json'), 'utf-8'));
+    assert.deepEqual(rules.projects, [
+      { match: { repo: 'github.com/acme/example.project' }, organization: 'org_company' },
+    ]);
+  });
+});

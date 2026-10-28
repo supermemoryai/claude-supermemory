@@ -1,4 +1,4 @@
-const { execFile } = require('node:child_process');
+const { execFile, spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -42,9 +42,14 @@ const {
 const SETTINGS_DIR = path.join(os.homedir(), '.supermemory-claude');
 const CREDENTIALS_FILE = path.join(SETTINGS_DIR, 'credentials.json');
 const CLIENT_FILE = path.join(SETTINGS_DIR, 'oauth-client.json');
+// Written after every completed login: which org it added, and when. A hook
+// waiting on a background login polls it.
+const LAST_LOGIN_FILE = path.join(SETTINGS_DIR, 'last-login.json');
 const LOCK_FILE = path.join(SETTINGS_DIR, 'auth.lock');
 const AUTH_PORT = 19876;
-const AUTH_TIMEOUT = 25000;
+const AUTH_WAIT_MS = 5 * 60 * 1000;
+const HOOK_WAIT_MS = 20000;
+const POLL_MS = 500;
 const REFRESH_TIMEOUT = 3000;
 const REFRESH_REQUEST_TIMEOUT = 10000;
 const REFRESH_SKEW = 60000;
@@ -133,7 +138,7 @@ function recoverAbandonedLock() {
         abandoned = error.code === 'ESRCH';
       }
     } else {
-      abandoned = Date.now() - snapshot.mtimeMs > AUTH_TIMEOUT * 2;
+      abandoned = Date.now() - snapshot.mtimeMs > AUTH_WAIT_MS * 2;
     }
     if (abandoned) {
       const current = fs.statSync(LOCK_FILE);
@@ -148,15 +153,35 @@ function recoverAbandonedLock() {
   }
 }
 
-async function withAuthLock(action, timeoutMs) {
+// A login started by a hook waits in the background, so a newer login stops it
+// instead of waiting up to five minutes for the lock.
+function stopBackgroundLogin() {
+  const owner = readJson(LOCK_FILE);
+  if (!owner?.background || !Number.isInteger(owner.pid) || owner.pid <= 0)
+    return;
+  try {
+    process.kill(owner.pid);
+  } catch {}
+}
+
+async function withAuthLock(
+  action,
+  timeoutMs,
+  { background = false, preempt = false } = {},
+) {
   fs.mkdirSync(SETTINGS_DIR, { recursive: true, mode: 0o700 });
   const deadline = Date.now() + timeoutMs;
   let descriptor;
+  let stopped = false;
   while (descriptor === undefined) {
     try {
       descriptor = fs.openSync(LOCK_FILE, 'wx', 0o600);
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
+      if (preempt && !stopped) {
+        stopBackgroundLogin();
+        stopped = true;
+      }
       recoverAbandonedLock();
       if (Date.now() >= deadline)
         throw new Error('Supermemory authentication is busy. Try again.');
@@ -164,7 +189,10 @@ async function withAuthLock(action, timeoutMs) {
     }
   }
   try {
-    fs.writeFileSync(descriptor, JSON.stringify({ pid: process.pid }));
+    fs.writeFileSync(
+      descriptor,
+      JSON.stringify({ pid: process.pid, ...(background && { background }) }),
+    );
     return await action(Math.max(1, deadline - Date.now()));
   } finally {
     fs.closeSync(descriptor);
@@ -338,10 +366,9 @@ function authRequired() {
   return Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' });
 }
 
-// Rotates one organization's refresh token. The request always runs to
-// completion and saves the replacement, whatever the caller's deadline:
-// aborting it mid-flight would leave the server holding a rotated refresh token
-// we never stored, and the next refresh would fail with invalid_grant.
+// Rotates one organization's refresh token. Never abort a refresh mid-flight:
+// the server would rotate a refresh token we never stored, and the next
+// refresh would fail with invalid_grant.
 const pendingRefreshes = new Map();
 const pendingReports = new Set();
 
@@ -391,7 +418,6 @@ function refreshCredentials(config, orgId) {
   return pending;
 }
 
-// Bounds only how long the caller waits; the refresh itself keeps running.
 function waitFor(promise, timeoutMs) {
   let timer;
   const expired = new Promise((_, reject) => {
@@ -501,7 +527,14 @@ function setDefaultOrganization(orgId) {
 
 async function startAuthFlow(
   config,
-  { force = false, timeoutMs = AUTH_TIMEOUT } = {},
+  {
+    force = false,
+    timeoutMs = AUTH_WAIT_MS,
+    printUrl = false,
+    background = false,
+    // Runs once the new login is saved; may return the repository it bound.
+    onLogin = null,
+  } = {},
 ) {
   return withAuthLock(async (remaining) => {
     const current = loadCredentials();
@@ -609,6 +642,11 @@ async function startAuthFlow(
                 ? { ...saved, ...client }
                 : newOAuthStore(client);
             saveCredentials(withOAuthTokens(base, orgId, tokens));
+            let boundRepo = null;
+            try {
+              boundRepo = onLogin?.(orgId) ?? null;
+            } catch {}
+            writeJson(LAST_LOGIN_FILE, { orgId, at: Date.now(), boundRepo });
             res
               .writeHead(200, { 'Content-Type': 'text/html' })
               .end(authSuccessHtml, () =>
@@ -631,6 +669,12 @@ async function startAuthFlow(
           ),
         );
         server.listen(AUTH_PORT, '127.0.0.1', () => {
+          // The Supermemory CLI collects these links to approve several
+          // plugins on one consent screen.
+          if (printUrl) {
+            process.stdout.write(`SUPERMEMORY_AUTHORIZE_URL=${authorizationUrl}\n`);
+            return;
+          }
           openUrl(authorizationUrl).catch(() =>
             reject(
               new Error(
@@ -646,7 +690,57 @@ async function startAuthFlow(
       server?.close();
       server?.closeAllConnections();
     }
-  }, timeoutMs);
+  }, timeoutMs, { background, preempt: true });
+}
+
+// The SessionStart hook is killed at 30s, so the login runs detached for five
+// minutes and the hook only waits briefly for it. `binding` lets the detached
+// login bind the hook's repository to the org picked on the consent screen,
+// even when that happens after the hook has returned.
+function startBackgroundAuth(config, waitMs = HOOK_WAIT_MS, binding = null) {
+  const startedAt = Date.now();
+  const child = spawn(
+    process.execPath,
+    [
+      path.join(__dirname, '../auth-server.js'),
+      config.apiBaseUrl,
+      config.resource,
+      ...(binding ? [JSON.stringify(binding)] : []),
+    ],
+    { detached: true, stdio: 'ignore', windowsHide: true },
+  );
+  child.unref();
+
+  return new Promise((resolve, reject) => {
+    const done = (error, result) => {
+      clearInterval(timer);
+      child.removeAllListeners();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    child.on('error', () => done(new Error('AUTH_FAILED')));
+    // A newer login stopping this one (a signal) is not a failure.
+    child.on('exit', (code, signal) => {
+      if (code !== 0 && !signal) done(new Error('AUTH_FAILED'));
+    });
+    const timer = setInterval(() => {
+      const finished = readJson(LAST_LOGIN_FILE);
+      const current = loadCredentials();
+      const tokens =
+        finished?.at >= startedAt && sameConfig(current, config)
+          ? oauthTokensFor(current, finished.orgId)
+          : null;
+      if (tokens?.accessToken) {
+        done(null, {
+          accessToken: tokens.accessToken,
+          orgId: finished.orgId,
+          boundRepo: finished.boundRepo ?? null,
+        });
+      } else if (Date.now() - startedAt > waitMs) {
+        done(new Error('AUTH_PENDING'));
+      }
+    }, POLL_MS);
+  });
 }
 
 module.exports = {
@@ -660,6 +754,8 @@ module.exports = {
   setDefaultOrganization,
   settleAuth,
   startAuthFlow,
+  startBackgroundAuth,
+  AUTH_WAIT_MS,
   openUrl,
 };
 
@@ -677,7 +773,11 @@ if (require.main === module) {
     if (command === 'login') {
       const { orgId } = await startAuthFlow(
         getOAuthConfig(getBaseUrl(), getMcpUrl()),
-        { force: true, timeoutMs: 5 * 60 * 1000 },
+        {
+          force: true,
+          timeoutMs: 5 * 60 * 1000,
+          printUrl: process.argv.includes('--print-url'),
+        },
       );
       console.log(`Supermemory connected through OAuth (organization ${orgId}).`);
     } else if (command === 'logout') {

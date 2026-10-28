@@ -5,12 +5,13 @@ const {
   loadCredentials,
   getAccessToken,
   getOAuthConfig,
-  startAuthFlow,
+  startBackgroundAuth,
 } = require('./auth');
+
+// A token right after login is fresh; this only bounds an unexpected refresh.
+const REFRESH_WAIT_MS = 3000;
 const {
-  appendProjectRule,
   listOAuthOrgs,
-  planRepoBinding,
   routeOrganization,
 } = require('../vendor/agent-config.cjs');
 const { loadProjectConfig } = require('./project-config');
@@ -138,25 +139,27 @@ async function getAuthToken(cwd, projectConfig, timeoutMs) {
   throw authRequired();
 }
 
-// Log in from this directory and return the token it should use. A login adds
-// the organization picked on the consent screen. If the repository wasn't
-// routed yet and would have used a different org, it is bound to the new one
-// so a later default change can't move its memories. Returns the notice to
-// show, if any.
-async function loginForDirectory(cwd, projectConfig, timeoutMs) {
+// Log in from this directory and return the token it should use. The login
+// runs in the background (the hook is killed at 30s) and adds the org picked
+// on the consent screen. A repository that wasn't routed yet and would have
+// used a different org is bound to the new one, so a later default change
+// can't move its memories. Rejects with AUTH_PENDING while the user is still
+// in the browser.
+async function loginForDirectory(cwd, projectConfig, waitMs) {
   const config = getOAuthConfig(
     getBaseUrl(cwd, projectConfig),
     getMcpUrl(cwd, projectConfig),
   );
   const before = routeDirectory(cwd);
-  const { orgId } = await startAuthFlow(config, { force: true, timeoutMs });
-  const notices = [];
-  const rule = planRepoBinding(cwd, before, orgId);
-  if (rule && appendProjectRule(rule)) {
-    notices.push(
-      `This repository (${rule.match.repo}) now uses organization ${orgId}. Undo by removing the rule from ~/.supermemory/config.json.`,
-    );
-  }
+  const { orgId, boundRepo } = await startBackgroundAuth(config, waitMs, {
+    cwd,
+    before: { source: before.source, orgId: before.orgId },
+  });
+  const notices = boundRepo
+    ? [
+        `This repository (${boundRepo}) now uses organization ${orgId}. Undo by removing the rule from ~/.supermemory/config.json.`,
+      ]
+    : [];
   const route = routeDirectory(cwd);
   if (route.paused || !route.orgId) {
     throw orgPaused({
@@ -167,7 +170,7 @@ async function loginForDirectory(cwd, projectConfig, timeoutMs) {
     });
   }
   return {
-    apiKey: await getAccessToken(config, route.orgId, timeoutMs),
+    apiKey: await getAccessToken(config, route.orgId, REFRESH_WAIT_MS),
     notices,
   };
 }
