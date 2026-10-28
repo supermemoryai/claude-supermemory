@@ -15,7 +15,7 @@ const {
 } = require('./lib/settings');
 const { BRAND, MARK, bold, gray } = require('./lib/colors');
 const { readStdin, writeOutput } = require('./lib/stdin');
-const { startAuthFlow, getOAuthConfig } = require('./lib/auth');
+const { startBackgroundAuth, getOAuthConfig } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
 const {
@@ -184,12 +184,12 @@ async function main() {
     } catch (error) {
       if (error.code !== 'AUTH_REQUIRED') throw error;
       try {
-        apiKey = await startAuthFlow(
+        apiKey = await startBackgroundAuth(
           getOAuthConfig(
             getBaseUrl(cwd, projectConfig),
             getMcpUrl(cwd, projectConfig),
           ),
-          { timeoutMs: Math.max(1, 25000 - (Date.now() - authStartedAt)) },
+          Math.max(1, 20000 - (Date.now() - authStartedAt)),
         );
       } catch (authErr) {
         writeState(sessionId, 'context', {
@@ -198,8 +198,8 @@ async function main() {
         });
         output(
           `<supermemory-status>
-${authErr.message === 'AUTH_TIMEOUT' ? 'Authentication timed out. Start a new session to retry login.' : 'Authentication failed. Start a new session to retry login.'}
-For an explicit login, run: node "${path.join(__dirname, 'lib/auth.js')}" login
+${authErr.message === 'AUTH_PENDING' ? 'Finish connecting Supermemory in the browser window (you have 5 minutes). Memory turns on from your next message.' : 'Authentication failed. Start a new session to retry login.'}
+If the browser did not open, run: node "${path.join(__dirname, 'lib/auth.js')}" login
 Or set the SUPERMEMORY_CC_API_KEY environment variable.
 </supermemory-status>`,
           [captureFailureNotice()?.systemMessage],
