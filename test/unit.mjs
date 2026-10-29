@@ -528,6 +528,44 @@ describe('capture hook', () => {
     });
   }
 
+  test('captures text blocks from array tool results of included tools', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+    writeFileSync(join(home, '.supermemory-claude', 'settings.json'),
+      JSON.stringify({ includeTools: ['Agent'] }));
+    const transcript = join(makeTempDir(t, 'array-result'), 'session.jsonl');
+    const longText = 'x'.repeat(600);
+    const entries = [
+      { type: 'user', uuid: 'u1', timestamp: '2026-10-24T07:00:00Z',
+        message: { content: 'Ask a subagent where the retry backoff is configured.' } },
+      { type: 'assistant', uuid: 'a1', message: { content: [
+        { type: 'tool_use', id: 't1', name: 'Agent', input: { prompt: 'Find retry backoff' } },
+      ] } },
+      { type: 'user', uuid: 'u2', message: { content: [
+        { type: 'tool_result', tool_use_id: 't1', content: [
+          { type: 'text', text: 'Backoff lives in config.ts.' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } },
+          { type: 'text', text: longText },
+        ] },
+      ] } },
+    ];
+    writeFileSync(transcript, entries.map((entry) => JSON.stringify(entry)).join('\n'));
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ id: 'doc_array', status: 'queued' }));
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const input = { session_id: 'array-result', cwd: repo, transcript_path: transcript,
+      last_assistant_message: 'The subagent found the retry backoff in config.ts.' };
+    assert.equal((await runHook('capture.js', input, env)).code, 0);
+    const { content } = JSON.parse(stub.requests[0].body);
+    assert.match(content, /assistant:tool_result<\|message\|>Agent\(success\): Backoff lives in config\.ts\.\nx+\.\.\.<\|end\|>/);
+    assert.ok(!content.includes('iVBORw0KGgo'));
+    assert.ok(!content.includes(longText));
+  });
+
   test('saves the transcript delta with scope metadata and entity context', async (t) => {
     const { repo, home } = makeRepo(t);
     mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
