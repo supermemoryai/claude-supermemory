@@ -573,12 +573,75 @@ describe('capture hook', () => {
     assert.equal(body.metadata.sm_scope, 'personal');
     assert.equal(body.customId, 'sess-2');
     assert.match(body.entityContext, /EXTRACT/);
+    assert.equal(body.dreaming, undefined);
 
     const state = readState('sess-2', {
       dataDir: join(home, '.supermemory-claude', 'statusline'),
     });
     assert.equal(state.capture.status, 'saved');
   });
+
+  for (const [label, userMode, projectMode, expected] of [
+    ['user setting', 'instant', undefined, 'instant'],
+    ['project overrides user', 'instant', 'dynamic', 'dynamic'],
+    ['invalid project value', 'instant', 'eventually', 'dynamic'],
+  ]) {
+    test(`sends the configured dreaming mode on v5 (${label})`, async (t) => {
+      const { repo, home } = makeRepo(t);
+      mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+      writeFileSync(
+        join(home, '.supermemory-claude', 'credentials.json'),
+        JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
+      );
+      writeFileSync(
+        join(home, '.supermemory-claude', 'settings.json'),
+        JSON.stringify({ dreaming: userMode }),
+      );
+      if (projectMode !== undefined) {
+        mkdirSync(join(repo, '.claude', '.supermemory-claude'), { recursive: true });
+        writeFileSync(
+          join(repo, '.claude', '.supermemory-claude', 'config.json'),
+          JSON.stringify({ dreaming: projectMode }),
+        );
+      }
+      const transcript = join(makeTempDir(t, 'dreaming'), 'session.jsonl');
+      writeFileSync(
+        transcript,
+        [
+          JSON.stringify({
+            type: 'user',
+            uuid: 'u1',
+            timestamp: '2026-10-27T19:00:00Z',
+            message: { content: 'Please remember the codeword for the dreaming setting' },
+          }),
+          JSON.stringify({
+            type: 'assistant',
+            uuid: 'a1',
+            message: { content: [{ type: 'text', text: 'Noted: the codeword is marigold.' }] },
+          }),
+        ].join('\n'),
+      );
+      const stub = await startStubServer(t, (record, res) => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ id: 'doc_dream', status: 'queued' }));
+      });
+
+      const { code } = await runHook(
+        'capture.js',
+        { session_id: 'dream', cwd: repo, transcript_path: transcript },
+        {
+          HOME: home,
+          USERPROFILE: home,
+          SUPERMEMORY_API_URL: stub.url,
+          SUPERMEMORY_API_VERSION: 'v5',
+        },
+      );
+      assert.equal(code, 0);
+      assert.equal(stub.requests.length, 1);
+      assert.match(stub.requests[0].url, /^\/ns\/repo_example_project__[^/]+\/document$/);
+      assert.equal(JSON.parse(stub.requests[0].body).dreaming, expected);
+    });
+  }
 
   test('a failed save does not advance the cursor; the retry recaptures (issue #96)', async (t) => {
     const { repo, home } = makeRepo(t);
