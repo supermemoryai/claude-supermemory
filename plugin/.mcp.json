@@ -1,6 +1,9 @@
 {
   "supermemory": {
     "command": "node",
-    "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/mcp-proxy.js"]
+    "args": [
+      "${CLAUDE_PLUGIN_ROOT}/hooks/mcp-proxy.js",
+      "https://mcp.supermemory.ai/mcp"
+    ]
   }
 }

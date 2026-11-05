@@ -99,13 +99,18 @@ function getBaseUrl(cwd, projectConfig) {
   return normalized;
 }
 
-function getMcpUrl(cwd, projectConfig) {
+function getMcpUrl(cwd, projectConfig, defaultUrl) {
   if (process.env.SUPERMEMORY_MCP_URL) {
     const configured = normalizeBaseUrl(process.env.SUPERMEMORY_MCP_URL);
     if (!configured) throw new Error('Invalid SUPERMEMORY_MCP_URL');
     return configured;
   }
   const api = new URL(getBaseUrl(cwd, projectConfig));
+  if (defaultUrl !== undefined && api.href === new URL(BASE_URL).href) {
+    const declared = normalizeBaseUrl(defaultUrl);
+    if (!declared) throw new Error('Invalid default MCP URL');
+    return declared;
+  }
   if (api.hostname.startsWith('api.')) {
     api.hostname = api.hostname.replace(/^api\./, 'mcp.');
     api.pathname = '/mcp';

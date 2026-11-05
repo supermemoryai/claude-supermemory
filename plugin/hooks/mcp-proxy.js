@@ -4,6 +4,7 @@ const { getContainerTag } = require('./lib/container-tag');
 const { settleAuth } = require('./lib/auth');
 const { getAuthToken, getMcpUrl } = require('./lib/settings');
 const REQUEST_TIMEOUT_MS = 30000;
+const DEFAULT_MCP_URL = process.argv[2];
 
 const REPO_SCOPED_TOOLS = new Set([
   'search_memory',
@@ -73,7 +74,7 @@ async function forward(message, apiKey) {
   };
   if (sessionId) headers['Mcp-Session-Id'] = sessionId;
 
-  const response = await fetch(getMcpUrl(), {
+  const response = await fetch(getMcpUrl(undefined, undefined, DEFAULT_MCP_URL), {
     method: 'POST',
     headers,
     body: JSON.stringify(message),
