@@ -13,6 +13,7 @@ const {
   getApiVersion,
   debugLog,
   getSignalConfig,
+  getDreamingMode,
 } = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
 const {
@@ -103,6 +104,7 @@ async function main() {
         id: sessionId,
         supportingContext: AGENT_SUPPORTING_CONTEXT,
         apiVersion: getApiVersion(cwd, projectConfig),
+        dreaming: getDreamingMode(cwd, projectConfig),
         timeoutMs: CAPTURE_TIMEOUT_MS,
       },
     );
