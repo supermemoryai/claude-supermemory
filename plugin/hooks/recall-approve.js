@@ -3,10 +3,6 @@ const { loadSettings, debugLog } = require('./lib/settings');
 const { readState, writeState } = require('./lib/session-state');
 const { readStdin, writeOutput } = require('./lib/stdin');
 
-// Supermemory MCP tool names arrive as mcp__supermemory__<tool> (direct
-// config), mcp__plugin_supermemory_supermemory__<tool> (plugin-scoped), or
-// mcp__claude_ai_supermemory__<tool> (claude.ai connector). Only read-only
-// tools run without a prompt; writes (add_memory, save-memory, ...) still ask.
 const TOOL_NAME_RE = /^mcp__(?:plugin_supermemory_|claude_ai_)?supermemory__(.+)$/;
 const READ_ONLY_TOOLS = new Set([
   'search_memory',
@@ -27,7 +23,7 @@ async function main() {
     const tool = TOOL_NAME_RE.exec(input.tool_name || '')?.[1];
 
     if (tool && READ_ONLY_TOOLS.has(tool)) {
-      debugLog(settings, 'Auto-approving supermemory recall', { tool });
+      debugLog(settings, 'Observing supermemory recall', { tool });
       const query =
         typeof input.tool_input?.query === 'string'
           ? input.tool_input.query
@@ -44,12 +40,7 @@ async function main() {
         systemMessage: query
           ? `${BRAND} ${gray('·')} recalling: ${query}`
           : `${BRAND} ${gray('·')} recalling memories`,
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'allow',
-          permissionDecisionReason:
-            'Supermemory recall runs automatically (read-only memory access).',
-        },
+        continue: true,
       });
       return;
     }

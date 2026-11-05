@@ -1,6 +1,6 @@
 ---
 description: Show Supermemory authentication and connection status
-allowed-tools: ["Bash", "Read"]
+allowed-tools: ["Read"]
 ---
 
 # Supermemory Status

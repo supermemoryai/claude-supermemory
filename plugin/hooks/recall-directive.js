@@ -106,7 +106,7 @@ loaded, resolve the exact name with ToolSearch("+supermemory search_memory").
 
 - Scope to this project with containerTag: "${namespace}"
 - Omit containerTag to use this project's default space.
-- Read-only supermemory calls are auto-approved; they never prompt the user.
+- Supermemory tool calls follow the user's normal Claude Code permissions.
 
 Worth a call when the user refers to past decisions, earlier sessions, or says
 "remember" / "we decided" / "last time". Skip it for self-contained tasks.

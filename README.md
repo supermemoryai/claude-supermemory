@@ -64,7 +64,7 @@ Then, only if you still have the old plugin installed, remove it:
 
 |  |  |
 | --- | --- |
-| 🧠 **Direct recall**<br>When authenticated, the hook searches substantive prompts before Claude sees them and injects fresh matches. No permission prompt or MCP tool call. | 🔎 **Hosted MCP tools**<br>`search_memory`, `listSpaces`, `whoAmI`, and more are available through the same credentials as the hooks, auto-approved when read-only. |
+| 🧠 **Direct recall**<br>When authenticated, the hook searches substantive prompts before Claude sees them and injects fresh matches. No permission prompt or MCP tool call. | 🔎 **Hosted MCP tools**<br>`search_memory`, `listSpaces`, `whoAmI`, and more are available through the same credentials as the hooks, subject to your Claude Code permissions. |
 | 💾 **Auto capture**<br>At the end of a session, the Stop hook saves new conversation content in the background. It asks Supermemory to retain durable context rather than transient Git state. | 🏷️ **Shared repo memory**<br>Automatic captures use the repository container shared with Codex and OpenCode and carry `sm_scope: personal` metadata. |
 | 🧭 **Deep multi-container search**<br>The `context-gatherer` subagent fans out several searches across a project's containers and returns a synthesized brief. | ⚙️ **Project config**<br>Per-repo settings, API keys, and container tag overrides via `.claude/.supermemory-claude/config.json`. |
 | 🗂️ **Codebase index**<br>`/supermemory:index` saves architecture, conventions, and how to run into this project's container. | 👋 **Session context**<br>Loads profile facts at session start and shows a welcome-back notice when you return to a project after 6+ hours. |
@@ -83,7 +83,7 @@ Claude Code supports hooks and MCP servers. `supermemory` registers four hooks, 
 | --- | --- | --- | --- |
 | 1 | `session-start` | `SessionStart` | Bootstraps auth and loads profile context plus a welcome-back notice. It does not install a statusline; an old auto-installed one is removed. |
 | 2 | `recall-directive` | `UserPromptSubmit` | Searches Supermemory directly with the prompt and injects fresh matches, deduplicated within the session. |
-| 3 | `recall-approve` | `PreToolUse` | Auto-allows read-only Supermemory MCP tools; writes still ask for permission. |
+| 3 | `recall-approve` | `PreToolUse` | Displays read-only Supermemory activity without approving calls or changing their input. |
 | 4 | `capture` | `Stop` | Saves the completed conversation delta in the background. |
 
 By default, recall is performed by the hook itself, not delegated to the model. It searches
@@ -94,6 +94,36 @@ tells Claude when it should decide to search on its own.
 The hooks are tolerant: if Supermemory is unreachable, the API key is missing, or
 anything else fails, they exit cleanly without breaking your Claude Code session.
 A capture that fails is reported the next time a session starts.
+
+### Directory review and permissions
+
+MCP tool calls follow your Claude Code permission rules. The `PreToolUse` hook
+only displays recall activity and records search counts; it does not approve
+calls or change their input. The index and status commands do not grant blanket
+shell access. Direct recall and capture still run as the lifecycle hooks you
+enabled when installing the plugin.
+
+The MCP declaration passes `https://mcp.supermemory.ai/mcp` literally to the
+bundled proxy as its default endpoint. The proxy uses that argument for the
+standard hosted configuration, shares the hooks' authentication, and supplies
+the current repository's default container. Existing `SUPERMEMORY_MCP_URL`,
+custom API backend settings, API keys, stored credentials, and OAuth refresh
+remain supported. Running the proxy without the argument retains its previous
+endpoint resolution.
+
+The optional recall-strip mod observes `classic.SessionStart` and
+`classic.UserPromptSubmit`. It calls `next(e)` with the original event, reads
+returned memory facts for its terminal display, and returns the same result
+object. It does not replace the first user message, edit permission settings,
+register agents, or alter tool inputs. Its `ui.render` hook adds the expandable
+recall strip above the terminal prompt. The Directory's static policy check may
+still require a reviewer to confirm this pass-through behavior.
+
+The credential-related review holds require review of the existing Supermemory
+sign-in flow, not a replacement of users' keys. Credentials are used for the
+configured Supermemory API and MCP endpoints. No new `user_config` credential
+flow is introduced by this change. Directory acceptance and publisher ownership
+must be confirmed in the submission portal; local validation is not approval.
 
 ### Shared Agents memory
 
