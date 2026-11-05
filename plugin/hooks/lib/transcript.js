@@ -228,8 +228,14 @@ function formatUserMessage(message) {
         if (!shouldIncludeTool(toolName, currentIncludeList)) {
           continue;
         }
+        const rawContent = Array.isArray(block.content)
+          ? block.content
+              .filter((part) => part?.type === 'text' && part.text)
+              .map((part) => part.text)
+              .join('\n')
+          : block.content;
         const resultContent = truncate(
-          cleanContent(block.content || ''),
+          cleanContent(rawContent || ''),
           MAX_TOOL_RESULT_LENGTH,
         );
         const status = block.is_error ? 'error' : 'success';
