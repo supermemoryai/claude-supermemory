@@ -365,7 +365,7 @@ describe('stdin handling', () => {
 });
 
 describe('recall-approve hook', () => {
-  test('auto-approves read-only supermemory tools with a visible message', async (t) => {
+  test('shows read-only supermemory recalls without approving them', async (t) => {
     const home = makeTempDir(t, 'approve-home');
     for (const toolName of [
       'mcp__supermemory__search_memory',
@@ -382,7 +382,8 @@ describe('recall-approve hook', () => {
         { HOME: home, USERPROFILE: home },
       );
       const output = JSON.parse(stdout);
-      assert.equal(output.hookSpecificOutput.permissionDecision, 'allow');
+      assert.equal(output.hookSpecificOutput, undefined);
+      assert.equal(output.continue, true);
       assert.equal(plain(output.systemMessage), '◪ supermemory · recalling: auth flow decisions');
     }
   });
