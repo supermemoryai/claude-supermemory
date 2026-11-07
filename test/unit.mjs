@@ -92,10 +92,15 @@ function readTags(cwd, home) {
   return JSON.parse(result.stdout);
 }
 
+const HOST_ENV = /^(CLAUDE_CODE_ENTRYPOINT|CONDUCTOR_.*|VK_WORKSPACE_ID|SUPERMEMORY_(CAPTURE|DEDUPE)_.*)$/;
+
 function runHook(name, input, env = {}) {
+  const hostless = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !HOST_ENV.test(key)),
+  );
   return new Promise((resolve, reject) => {
     const child = spawn('node', [join(HOOKS_DIR, name)], {
-      env: { ...process.env, ...env },
+      env: { ...hostless, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
@@ -158,6 +163,20 @@ describe('container tags', () => {
     const worktree = join(repo, '..', 'worktree');
     git(['worktree', 'add', '--detach', worktree, 'HEAD']);
     assert.equal(readTags(worktree, home).tag, readTags(repo, home).tag);
+  });
+
+  test('collapses worktrees of a repo without an origin onto the base checkout', (t) => {
+    const { repo, git, home } = makeRepo(t, 'local-only');
+    git(['remote', 'remove', 'origin']);
+    git(['add', 'README.md']);
+    git(['commit', '-m', 'initial']);
+    const workspaces = join(repo, '..', 'conductor', 'workspaces', 'local-only');
+    git(['worktree', 'add', '-b', 'berlin', join(workspaces, 'berlin'), 'HEAD']);
+    git(['worktree', 'add', '-b', 'tokyo', join(workspaces, 'tokyo'), 'HEAD']);
+    const base = readTags(repo, home).tag;
+    assert.match(base, /^repo_local_only__/);
+    assert.equal(readTags(join(workspaces, 'berlin'), home).tag, base);
+    assert.equal(readTags(join(workspaces, 'tokyo'), home).tag, base);
   });
 
   test('honors the project-config override', (t) => {
@@ -620,6 +639,162 @@ describe('capture hook', () => {
     // Cursor advanced after success: a third run finds nothing new.
     await runHook('capture.js', input, env);
     assert.equal(stub.requests.length, 2);
+  });
+});
+
+describe('session scope', () => {
+  function writeTranscript(dir, entries) {
+    const file = join(dir, 'session.jsonl');
+    writeFileSync(file, entries.map((entry) => JSON.stringify(entry)).join('\n'));
+    return file;
+  }
+
+  function okStub(t) {
+    return startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          id: 'doc_scope',
+          status: 'queued',
+          profile: { static: ['Uses Bun'], dynamic: [] },
+          searchResults: { results: [] },
+        }),
+      );
+    });
+  }
+
+  async function runAllHooks(repo, transcript, input, env) {
+    const base = { session_id: `scope-${Math.random()}`, cwd: repo, ...input };
+    await runHook('session-start.js', base, env);
+    await runHook('recall-directive.js', { ...base, prompt: `continue the database work in ${base.session_id}` }, env);
+    await runHook('capture.js', { ...base, transcript_path: transcript }, env);
+  }
+
+  const transcriptEntries = [
+    { type: 'user', uuid: 'u1', message: { content: 'Remember we chose Drizzle over Prisma for the database layer.' } },
+    { type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'Noted: Drizzle over Prisma, decided for performance reasons.' }] } },
+  ];
+
+  const cases = [
+    { name: 'subagent hook input (agent_id)', input: { agent_id: 'agent-abc123', agent_type: 'Explore' }, env: {}, flag: { SUPERMEMORY_CAPTURE_SUBAGENTS: 'true' }, setting: { captureSubagents: true } },
+    { name: 'claude -p (CLAUDE_CODE_ENTRYPOINT=sdk-cli)', input: {}, env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }, flag: { SUPERMEMORY_CAPTURE_HEADLESS: 'true' }, setting: { captureHeadless: true } },
+    { name: 'Agent SDK (CLAUDE_CODE_ENTRYPOINT=sdk-ts)', input: {}, env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' }, flag: { SUPERMEMORY_CAPTURE_HEADLESS: 'true' }, setting: { captureHeadless: true } },
+  ];
+
+  for (const { name, input, env, flag, setting } of cases) {
+    test(`makes no API calls for ${name} until opted in`, async (t) => {
+      const { repo } = makeRepo(t);
+      const home = makeAuthedHome(t);
+      const transcript = writeTranscript(makeTempDir(t, 'scope'), transcriptEntries);
+      const stub = await okStub(t);
+      const baseEnv = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url, ...env };
+
+      await runAllHooks(repo, transcript, input, baseEnv);
+      assert.equal(stub.requests.length, 0);
+
+      await runAllHooks(repo, transcript, input, { ...baseEnv, ...flag });
+      assert.deepEqual(stub.requests.map((r) => r.url), ['/v4/profile', '/v4/profile', '/v3/documents']);
+
+      writeFileSync(join(home, '.supermemory-claude', 'settings.json'), JSON.stringify(setting));
+      await runAllHooks(repo, transcript, input, baseEnv);
+      assert.equal(stub.requests.length, 6);
+    });
+  }
+
+  test('interactive sessions and orchestrated -p sessions keep recall and capture', async (t) => {
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
+    const transcript = writeTranscript(makeTempDir(t, 'scope-interactive'), transcriptEntries);
+    const stub = await okStub(t);
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'cli' });
+    await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli', VK_WORKSPACE_ID: 'ws-1' });
+    assert.equal(stub.requests.length, 6);
+
+    await runAllHooks(repo, transcript, {}, {
+      ...env,
+      CONDUCTOR_WORKSPACE_PATH: '/tmp/ws',
+      SUPERMEMORY_CAPTURE_ORCHESTRATED: 'false',
+    });
+    assert.equal(stub.requests.length, 6);
+  });
+
+  test('a background subagent result relayed as a task-notification turn is neither recalled nor captured', async (t) => {
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
+    const notification = '<task-notification>\n<task-id>a60c</task-id>\n<status>completed</status>\n<result>Subagent found the flaky test in ci.yml</result>\n</task-notification>';
+    const entries = [
+      ...transcriptEntries,
+      { type: 'user', uuid: 'n1', origin: { kind: 'task-notification' }, message: { content: notification } },
+      { type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'The subagent reports the flaky test lives in ci.yml.' }] } },
+    ];
+    const dir = makeTempDir(t, 'scope-notification');
+    const transcript = writeTranscript(dir, entries.slice(0, 2));
+    const stub = await okStub(t);
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const input = { session_id: 'notified', cwd: repo, transcript_path: transcript };
+
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 1);
+
+    writeTranscript(dir, entries);
+    await runHook('recall-directive.js', { ...input, prompt: notification }, env);
+    await runHook('capture.js', { ...input, last_assistant_message: 'The subagent reports the flaky test lives in ci.yml.' }, env);
+    assert.equal(stub.requests.length, 1);
+
+    entries.push(
+      { type: 'user', uuid: 'u3', message: { content: 'Great, now please fix that flaky test in the workflow.' } },
+      { type: 'assistant', uuid: 'a3', message: { content: [{ type: 'text', text: 'Fixed the flaky test by pinning the runner image.' }] } },
+    );
+    writeTranscript(dir, entries);
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 2);
+    const content = JSON.parse(stub.requests[1].body).content;
+    assert.match(content, /pinning the runner image/);
+    assert.doesNotMatch(content, /task-notification|subagent reports/);
+
+    const optIn = { ...env, SUPERMEMORY_CAPTURE_SUBAGENTS: 'true' };
+    await runHook('recall-directive.js', { ...input, session_id: 'notified-2', prompt: notification }, optIn);
+    assert.equal(stub.requests.length, 3);
+  });
+
+  test('an opening prompt already captured for this container is sent once', async (t) => {
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
+    const stub = await okStub(t);
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const task = 'Run the nightly dependency audit and open a PR with the upgrades you make.';
+    const save = async (sessionId, extraEnv = {}) => {
+      const transcript = writeTranscript(makeTempDir(t, sessionId), [
+        { type: 'user', uuid: `${sessionId}-u1`, message: { content: task } },
+        { type: 'assistant', uuid: `${sessionId}-a1`, message: { content: [{ type: 'text', text: `Worker ${sessionId} upgraded lodash and opened the audit PR.` }] } },
+      ]);
+      await runHook('capture.js', { session_id: sessionId, cwd: repo, transcript_path: transcript }, { ...env, ...extraEnv });
+      return JSON.parse(stub.requests.at(-1).body);
+    };
+
+    assert.ok((await save('worker-1')).content.includes(task));
+    const second = await save('worker-2');
+    assert.ok(!second.content.includes(task));
+    assert.match(second.content, /\[opening prompt already captured from this machine: [0-9a-f]{16}\]/);
+    assert.match(second.content, /Worker worker-2 upgraded lodash/);
+    assert.equal(second.customId, 'worker-2');
+    assert.ok((await save('worker-3', { SUPERMEMORY_DEDUPE_OPENING_PROMPT: 'false' })).content.includes(task));
+  });
+
+  test('an identical recall query from another session within 10 minutes is skipped', async (t) => {
+    const { repo } = makeRepo(t);
+    const home = makeAuthedHome(t);
+    const stub = await okStub(t);
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const prompt = 'Run the nightly dependency audit and open a PR with the upgrades.';
+    await runHook('recall-directive.js', { session_id: 'w1', cwd: repo, prompt }, env);
+    await runHook('recall-directive.js', { session_id: 'w2', cwd: repo, prompt: ` ${prompt}  ` }, env);
+    assert.equal(stub.requests.length, 1);
+    await runHook('recall-directive.js', { session_id: 'w1', cwd: repo, prompt }, env);
+    assert.equal(stub.requests.length, 2);
+    await runHook('recall-directive.js', { session_id: 'w3', cwd: repo, prompt }, { ...env, SUPERMEMORY_DEDUPE_RECALL_QUERIES: 'false' });
+    assert.equal(stub.requests.length, 3);
   });
 });
 

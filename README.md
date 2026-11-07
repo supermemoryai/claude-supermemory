@@ -137,13 +137,49 @@ sm_scope: personal                   metadata on automatic captures
 
 The hash is derived from the normalized Git remote, so clones share memory while
 same-named repositories do not collide. Repositories without a remote fall back to
-a local path identity. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
+a local path identity. Linked worktrees (`git worktree add`, Conductor, Claude
+Squad, `claude --worktree`) resolve to the main checkout's identity, with or
+without a remote. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
 path instead of the remote identity.
 
 Unlike Codex, this plugin does not read older per-tool legacy containers
 (`codex_user_*`, `opencode_project_*`, and similar); it only ever uses the single
 unified identity above, overridden via the project `namespace` setting
 or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
+
+### Which sessions are remembered
+
+By default the hooks make no Supermemory calls (no profile, no prompt recall,
+no capture) for sessions nobody is typing into. They decide this only from
+signals Claude Code sets:
+
+| Session | Signal | Opt back in |
+| --- | --- | --- |
+| Subagents and in-process teammates | `agent_id` in the hook input | `captureSubagents: true` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` |
+| Background subagent results relayed to the main session | the `<task-notification>` turn (`origin.kind: "task-notification"` in the transcript) | `captureSubagents: true` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` |
+| `claude -p`, Agent SDK and GitHub Action runs | `CLAUDE_CODE_ENTRYPOINT` is `sdk-cli`, `sdk-ts`, `sdk-py` or `claude-code-github-action` | `captureHeadless: true` / `SUPERMEMORY_CAPTURE_HEADLESS=true` |
+
+Claude Code's own helper prompts (session titles, prompt suggestions, the auto
+mode classifier) never run these hooks, so they were never captured.
+
+Sessions started by Conductor or Vibe Kanban (`CONDUCTOR_WORKSPACE_PATH`,
+`CONDUCTOR_SESSION_ID` or `VK_WORKSPACE_ID` set) are real user work and stay
+on even though they run through `claude -p`; set `captureOrchestrated: false`
+or `SUPERMEMORY_CAPTURE_ORCHESTRATED=false` to turn them off. Crystal sets no
+such variable, so its sessions count as headless.
+
+For swarms that replay one task across many sessions, two local indexes in
+`~/.supermemory-claude` (hashes only) cut repeats:
+
+- **Opening prompt**: a session whose opening prompt was already captured from
+  this machine for the same container saves the session with a one-line
+  `[opening prompt already captured from this machine: <hash>]` marker in place
+  of the prompt. Opt out with `dedupeOpeningPrompt: false` /
+  `SUPERMEMORY_DEDUPE_OPENING_PROMPT=false`.
+- **Recall query**: prompt recall is skipped when another session sent the
+  exact same query (whitespace-normalized) for the same container in the last
+  10 minutes. Opt out with `dedupeRecallQueries: false` /
+  `SUPERMEMORY_DEDUPE_RECALL_QUERIES=false`.
 
 ## Configuration
 
@@ -158,6 +194,11 @@ or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
 | `SUPERMEMORY_REPO_TAG` | Project-scope override; used when no project scope setting is set. |
 | `SUPERMEMORY_ISOLATE_WORKTREES` | Set to `true` to key the project container on the worktree path instead of the Git remote. |
 | `SUPERMEMORY_DEBUG` | Set to `true` to enable debug logging. |
+| `SUPERMEMORY_CAPTURE_SUBAGENTS` | `true` or `false`; overrides `captureSubagents`. |
+| `SUPERMEMORY_CAPTURE_HEADLESS` | `true` or `false`; overrides `captureHeadless`. |
+| `SUPERMEMORY_CAPTURE_ORCHESTRATED` | `true` or `false`; overrides `captureOrchestrated`. |
+| `SUPERMEMORY_DEDUPE_OPENING_PROMPT` | `true` or `false`; overrides `dedupeOpeningPrompt`. |
+| `SUPERMEMORY_DEDUPE_RECALL_QUERIES` | `true` or `false`; overrides `dedupeRecallQueries`. |
 
 ### Global settings (`~/.supermemory-claude/settings.json`)
 
@@ -180,6 +221,11 @@ or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
 | `signalTurnsBefore` | Context turns before signal (default: 3). |
 | `includeTools` | Tool calls to explicitly capture. |
 | `debug` | Enable debug logging (default: false). |
+| `captureSubagents` | Recall and capture for subagents and relayed subagent results (default: false). |
+| `captureHeadless` | Recall and capture for `claude -p`, Agent SDK and GitHub Action runs (default: false). |
+| `captureOrchestrated` | Recall and capture for Conductor and Vibe Kanban sessions (default: true). |
+| `dedupeOpeningPrompt` | Replace an opening prompt already captured from this machine with a marker (default: true). |
+| `dedupeRecallQueries` | Skip recall for a query another session sent in the last 10 minutes (default: true). |
 
 ### Project config (`.claude/.supermemory-claude/config.json`)
 

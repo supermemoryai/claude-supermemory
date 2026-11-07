@@ -35,6 +35,19 @@ const DEFAULT_SETTINGS = {
     'deprecate',
   ],
   signalTurnsBefore: 3,
+  captureSubagents: false,
+  captureHeadless: false,
+  captureOrchestrated: true,
+  dedupeOpeningPrompt: true,
+  dedupeRecallQueries: true,
+};
+
+const ENV_FLAGS = {
+  captureSubagents: 'SUPERMEMORY_CAPTURE_SUBAGENTS',
+  captureHeadless: 'SUPERMEMORY_CAPTURE_HEADLESS',
+  captureOrchestrated: 'SUPERMEMORY_CAPTURE_ORCHESTRATED',
+  dedupeOpeningPrompt: 'SUPERMEMORY_DEDUPE_OPENING_PROMPT',
+  dedupeRecallQueries: 'SUPERMEMORY_DEDUPE_RECALL_QUERIES',
 };
 
 function loadSettings() {
@@ -50,6 +63,10 @@ function loadSettings() {
     console.error(`Settings: Failed to load ${SETTINGS_FILE}: ${err.message}`);
   }
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
+  for (const [key, name] of Object.entries(ENV_FLAGS)) {
+    const value = process.env[name]?.trim().toLowerCase();
+    if (value === 'true' || value === 'false') settings[key] = value === 'true';
+  }
   return settings;
 }
 
