@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash, randomUUID } = require('node:crypto');
 const { atomicWriteJson } = require('./session-state');
+const { isHostNotificationEntry } = require('./session-scope');
 const {
   getIncludeTools,
   shouldIncludeTool,
@@ -88,7 +89,12 @@ function getAssistantReplyText(entry) {
     .join('\n');
 }
 
-function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
+function prepareCapture(
+  transcriptPath,
+  sessionId,
+  lastAssistantMessage,
+  options = {},
+) {
   const entries = parseTranscript(transcriptPath);
   const tracker = readCaptureTracker(sessionId);
   const lastCapturedUuid = tracker.lastUuid;
@@ -116,8 +122,17 @@ function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
     return true;
   });
 
-  const newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
+  let newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
   const lastUuid = newEntries.at(-1)?.uuid || lastCapturedUuid || '';
+  let inHostTurn = false;
+  if (!options.captureSubagents) {
+    newEntries = newEntries.filter((entry) => {
+      if (entry.type === 'user' && hasTextContent(entry)) {
+        inHostTurn = isHostNotificationEntry(entry);
+      }
+      return !inHostTurn;
+    });
+  }
   const conversational = entries.filter(
     (entry) => entry.type === 'user' || entry.type === 'assistant',
   );
@@ -130,11 +145,33 @@ function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
     (reply) =>
       reply.afterUuid === lastUuid && reply.hash === replyHash(finalText),
   );
-  const uncapturedEntries = newEntries.filter(
-    (entry) => !capturedUuids.has(entry.uuid),
+  let openingPrompt = null;
+  const opening = entries.find(
+    (entry) =>
+      entry.type === 'user' &&
+      hasTextContent(entry) &&
+      !isHostNotificationEntry(entry),
   );
+  const uncapturedEntries = newEntries
+    .filter((entry) => !capturedUuids.has(entry.uuid))
+    .map((entry) => {
+      if (entry !== opening) return entry;
+      const text = getTextFromEntry(entry);
+      if (!options.isKnownOpeningPrompt?.(text)) {
+        openingPrompt = text;
+        return entry;
+      }
+      const hash = replyHash(text.replace(/\s+/g, ' ').trim()).slice(0, 16);
+      return {
+        ...entry,
+        message: {
+          ...entry.message,
+          content: `[opening prompt already captured from this machine: ${hash}]`,
+        },
+      };
+    });
 
-  if (finalText && !alreadyFlushed && !alreadyCaptured) {
+  if (finalText && !alreadyFlushed && !alreadyCaptured && !inHostTurn) {
     uncapturedEntries.push({
       type: 'assistant',
       message: { content: [{ type: 'text', text: lastAssistantMessage }] },
@@ -142,7 +179,13 @@ function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
     pendingReplies.push({ afterUuid: lastUuid, hash: replyHash(finalText) });
   }
 
-  return { newEntries: uncapturedEntries, lastUuid, pendingReplies };
+  return {
+    newEntries: uncapturedEntries,
+    lastUuid,
+    pendingReplies,
+    openingPrompt,
+    openingUuid: opening?.uuid,
+  };
 }
 
 function parseTranscript(transcriptPath) {
@@ -511,6 +554,7 @@ function formatSignalEntries(
   sessionId,
   cwd,
   lastAssistantMessage,
+  options = {},
 ) {
   toolUseMap = new Map();
   currentIncludeList = getIncludeTools(cwd);
@@ -518,11 +562,8 @@ function formatSignalEntries(
   const signalConfig = getSignalConfig(cwd);
   const { keywords, turnsBefore } = signalConfig;
 
-  const { newEntries, lastUuid, pendingReplies } = prepareCapture(
-    transcriptPath,
-    sessionId,
-    lastAssistantMessage,
-  );
+  const { newEntries, lastUuid, pendingReplies, openingPrompt, openingUuid } =
+    prepareCapture(transcriptPath, sessionId, lastAssistantMessage, options);
 
   if (newEntries.length === 0) return null;
 
@@ -571,7 +612,16 @@ function formatSignalEntries(
 
   if (result.length < 100) return null;
 
-  return { formatted: result, lastUuid, pendingReplies };
+  return {
+    formatted: result,
+    lastUuid,
+    pendingReplies,
+    openingPrompt:
+      openingPrompt &&
+      allEntriesToFormat.some((entry) => entry.uuid === openingUuid)
+        ? openingPrompt
+        : null,
+  };
 }
 
 function formatNewEntries(
@@ -579,15 +629,13 @@ function formatNewEntries(
   sessionId,
   cwd,
   lastAssistantMessage,
+  options = {},
 ) {
   toolUseMap = new Map();
   currentIncludeList = getIncludeTools(cwd);
 
-  const { newEntries, lastUuid, pendingReplies } = prepareCapture(
-    transcriptPath,
-    sessionId,
-    lastAssistantMessage,
-  );
+  const { newEntries, lastUuid, pendingReplies, openingPrompt } =
+    prepareCapture(transcriptPath, sessionId, lastAssistantMessage, options);
 
   if (newEntries.length === 0) return null;
 
@@ -611,7 +659,7 @@ function formatNewEntries(
 
   if (result.length < 100) return null;
 
-  return { formatted: result, lastUuid, pendingReplies };
+  return { formatted: result, lastUuid, pendingReplies, openingPrompt };
 }
 
 module.exports = {

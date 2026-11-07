@@ -5,6 +5,7 @@ const path = require('node:path');
 const { searchMemories } = require('./lib/api');
 const { BRAND, gray, red } = require('./lib/colors');
 const { getNamespace } = require('./lib/container-tag');
+const { recalledElsewhere, rememberRecallQuery } = require('./lib/dedupe');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
@@ -21,6 +22,7 @@ const {
   readState,
   writeState,
 } = require('./lib/session-state');
+const { getSkipReason } = require('./lib/session-scope');
 const { readStdin, writeOutput } = require('./lib/stdin');
 
 // Recall is performed HERE, not delegated to the model: the hook searches
@@ -134,6 +136,12 @@ async function main() {
 
   try {
     const input = await readStdin();
+    const skipReason = getSkipReason(input, settings);
+    if (skipReason) {
+      debugLog(settings, 'Supermemory skipped', { reason: skipReason });
+      writeOutput({ continue: true, suppressOutput: true });
+      return;
+    }
     const cwd = input.cwd || process.cwd();
     const prompt = (input.prompt || '').trim();
     const { directive } = getRecallConfig(cwd);
@@ -153,6 +161,17 @@ async function main() {
       return;
     }
 
+    const namespace = getNamespace(cwd);
+    const query = prompt.slice(0, MAX_QUERY_LENGTH);
+    if (
+      settings.dedupeRecallQueries &&
+      recalledElsewhere(namespace, query, input.session_id)
+    ) {
+      debugLog(settings, 'Recall skipped: same query recalled recently');
+      writeOutput({ continue: true, suppressOutput: true });
+      return;
+    }
+
     const projectConfig = loadProjectConfig(cwd);
     const requestStarted = Date.now();
     let apiKey;
@@ -163,12 +182,14 @@ async function main() {
       return;
     }
 
-    const namespace = getNamespace(cwd);
+    if (settings.dedupeRecallQueries) {
+      rememberRecallQuery(namespace, query, input.session_id);
+    }
     const response = await searchMemories(
       getBaseUrl(cwd, projectConfig),
       apiKey,
       namespace,
-      prompt.slice(0, MAX_QUERY_LENGTH),
+      query,
       {
         timeoutMs: Math.max(1, SEARCH_TIMEOUT_MS - (Date.now() - requestStarted)),
         apiVersion: getApiVersion(cwd, projectConfig),
