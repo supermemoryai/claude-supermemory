@@ -839,6 +839,13 @@ describe('session scope', () => {
     assert.equal(stub.requests.length, 4);
     await recall('w4', prompt, { SUPERMEMORY_CC_API_KEY: 'sm_other_account_key_0123456789' });
     assert.equal(stub.requests.length, 5);
+
+    const cacheFile = join(home, '.supermemory-claude', 'recall-cache.json');
+    assert.equal(statSync(cacheFile).mode & 0o777, 0o600);
+    assert.equal(statSync(join(home, '.supermemory-claude')).mode & 0o777, 0o700);
+    assert.doesNotMatch(readFileSync(cacheFile, 'utf8'), /sm_test_key|sm_other_account_key/);
+    spawnSync('node', [join(HOOKS_DIR, 'lib', 'auth.js'), 'logout'], { env: { ...process.env, ...env } });
+    assert.equal(existsSync(cacheFile), false);
   });
 });
 

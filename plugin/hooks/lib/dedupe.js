@@ -103,4 +103,5 @@ module.exports = {
   rememberOpeningPrompt,
   cachedRecall,
   cacheRecall,
+  RECALL_CACHE_FILE,
 };
