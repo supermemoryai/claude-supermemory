@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   utimesSync,
@@ -92,7 +93,7 @@ function readTags(cwd, home) {
   return JSON.parse(result.stdout);
 }
 
-const HOST_ENV = /^(CLAUDE_CODE_ENTRYPOINT|CONDUCTOR_.*|VK_WORKSPACE_ID|SUPERMEMORY_(CAPTURE|DEDUPE)_.*)$/;
+const HOST_ENV = /^(CLAUDE_CODE_ENTRYPOINT|CLAUDE_CODE_SESSION_ATTENDED|CONDUCTOR_.*|VK_WORKSPACE_ID|SUPERMEMORY_(CAPTURE|DEDUPE)_.*)$/;
 
 function runHook(name, input, env = {}) {
   const hostless = Object.fromEntries(
@@ -676,9 +677,8 @@ describe('session scope', () => {
   ];
 
   const cases = [
-    { name: 'subagent hook input (agent_id)', input: { agent_id: 'agent-abc123', agent_type: 'Explore' }, env: {}, flag: { SUPERMEMORY_CAPTURE_SUBAGENTS: 'true' }, setting: { captureSubagents: true } },
-    { name: 'claude -p (CLAUDE_CODE_ENTRYPOINT=sdk-cli)', input: {}, env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }, flag: { SUPERMEMORY_CAPTURE_HEADLESS: 'true' }, setting: { captureHeadless: true } },
-    { name: 'Agent SDK (CLAUDE_CODE_ENTRYPOINT=sdk-ts)', input: {}, env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' }, flag: { SUPERMEMORY_CAPTURE_HEADLESS: 'true' }, setting: { captureHeadless: true } },
+    { name: 'claude -p (sdk-cli, unattended)', input: {}, env: { CLAUDE_CODE_ENTRYPOINT: 'sdk-cli', CLAUDE_CODE_SESSION_ATTENDED: '0' }, flag: { SUPERMEMORY_CAPTURE_HEADLESS: 'true' }, setting: { captureHeadless: true } },
+    { name: 'a GitHub Action run', input: {}, env: { CLAUDE_CODE_ENTRYPOINT: 'claude-code-github-action' }, flag: { SUPERMEMORY_CAPTURE_HEADLESS: '1' }, setting: { captureHeadless: true } },
   ];
 
   for (const { name, input, env, flag, setting } of cases) {
@@ -708,15 +708,18 @@ describe('session scope', () => {
     const stub = await okStub(t);
     const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
     await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'cli' });
-    await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli', VK_WORKSPACE_ID: 'ws-1' });
-    assert.equal(stub.requests.length, 6);
+    await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli', CLAUDE_CODE_SESSION_ATTENDED: '0', VK_WORKSPACE_ID: 'ws-1' });
+    await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli', CLAUDE_CODE_SESSION_ATTENDED: '1' });
+    await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' });
+    await runAllHooks(repo, transcript, {}, { ...env, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' });
+    assert.equal(stub.requests.length, 15);
 
     await runAllHooks(repo, transcript, {}, {
       ...env,
       CONDUCTOR_WORKSPACE_PATH: '/tmp/ws',
-      SUPERMEMORY_CAPTURE_ORCHESTRATED: 'false',
+      SUPERMEMORY_CAPTURE_ORCHESTRATED: 'off',
     });
-    assert.equal(stub.requests.length, 6);
+    assert.equal(stub.requests.length, 15);
   });
 
   test('a background subagent result relayed as a task-notification turn is neither recalled nor captured', async (t) => {
@@ -726,6 +729,7 @@ describe('session scope', () => {
     const entries = [
       ...transcriptEntries,
       { type: 'user', uuid: 'n1', origin: { kind: 'task-notification' }, message: { content: notification } },
+      { type: 'user', uuid: 'i1', message: { content: [{ type: 'text', text: '[Request interrupted by user]' }] } },
       { type: 'assistant', uuid: 'a2', message: { content: [{ type: 'text', text: 'The subagent reports the flaky test lives in ci.yml.' }] } },
     ];
     const dir = makeTempDir(t, 'scope-notification');
@@ -751,19 +755,29 @@ describe('session scope', () => {
     assert.equal(stub.requests.length, 2);
     const content = JSON.parse(stub.requests[1].body).content;
     assert.match(content, /pinning the runner image/);
-    assert.doesNotMatch(content, /task-notification|subagent reports/);
+    assert.doesNotMatch(content, /task-notification|subagent reports|interrupted/);
+
+    entries.push(
+      { type: 'user', uuid: 's1', origin: { kind: 'task-notification', subkind: 'scheduled-trigger' }, message: { content: 'Nightly: summarize yesterday’s failing CI runs for me.' } },
+      { type: 'assistant', uuid: 's2', message: { content: [{ type: 'text', text: 'Yesterday two CI runs failed on the flaky upload step.' }] } },
+    );
+    writeTranscript(dir, entries);
+    await runHook('capture.js', input, env);
+    assert.equal(stub.requests.length, 3);
+    assert.match(JSON.parse(stub.requests[2].body).content, /flaky upload step/);
 
     const optIn = { ...env, SUPERMEMORY_CAPTURE_SUBAGENTS: 'true' };
     await runHook('recall-directive.js', { ...input, session_id: 'notified-2', prompt: notification }, optIn);
-    assert.equal(stub.requests.length, 3);
+    assert.equal(stub.requests.length, 4);
   });
 
-  test('an opening prompt already captured for this container is sent once', async (t) => {
+  test('a long opening prompt captured for this container in the last 24 hours is sent once', async (t) => {
     const { repo } = makeRepo(t);
     const home = makeAuthedHome(t);
     const stub = await okStub(t);
     const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
-    const task = 'Run the nightly dependency audit and open a PR with the upgrades you make.';
+    const longTask = 'Run the nightly dependency audit: list every outdated package in the workspace, upgrade the ones with only patch or minor bumps, run the full test suite after each upgrade, and open a PR with the upgrades you make.';
+    let task = longTask;
     const save = async (sessionId, extraEnv = {}) => {
       const transcript = writeTranscript(makeTempDir(t, sessionId), [
         { type: 'user', uuid: `${sessionId}-u1`, message: { content: task } },
@@ -779,22 +793,50 @@ describe('session scope', () => {
     assert.match(second.content, /\[opening prompt already captured from this machine: [0-9a-f]{16}\]/);
     assert.match(second.content, /Worker worker-2 upgraded lodash/);
     assert.equal(second.customId, 'worker-2');
-    assert.ok((await save('worker-3', { SUPERMEMORY_DEDUPE_OPENING_PROMPT: 'false' })).content.includes(task));
+    assert.ok((await save('worker-3', { SUPERMEMORY_DEDUPE_OPENING_PROMPT: 'off' })).content.includes(task));
+
+    const index = join(home, '.supermemory-claude', 'opening-prompts.json');
+    const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
+    writeFileSync(index, JSON.stringify(JSON.parse(readFileSync(index, 'utf8')).map((item) => ({ ...item, at: dayAgo }))));
+    assert.ok((await save('worker-4')).content.includes(task));
+
+    task = 'Run the nightly dependency audit and open a PR with the upgrades you make.';
+    assert.ok((await save('worker-5')).content.includes(task));
+    assert.ok((await save('worker-6')).content.includes(task));
   });
 
-  test('an identical recall query from another session within 10 minutes is skipped', async (t) => {
+  test('an identical recall query from another session within 10 minutes re-serves the cached result', async (t) => {
     const { repo } = makeRepo(t);
     const home = makeAuthedHome(t);
-    const stub = await okStub(t);
+    let failing = true;
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (failing) {
+        res.statusCode = 500;
+        res.end('{"error":"down"}');
+        return;
+      }
+      res.end(JSON.stringify({ searchResults: { results: [{ memory: 'The audit runs every night at 02:00 UTC', similarity: 0.9 }] } }));
+    });
     const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
     const prompt = 'Run the nightly dependency audit and open a PR with the upgrades.';
-    await runHook('recall-directive.js', { session_id: 'w1', cwd: repo, prompt }, env);
-    await runHook('recall-directive.js', { session_id: 'w2', cwd: repo, prompt: ` ${prompt}  ` }, env);
-    assert.equal(stub.requests.length, 1);
-    await runHook('recall-directive.js', { session_id: 'w1', cwd: repo, prompt }, env);
+    const recall = async (sessionId, text = prompt, extraEnv = {}) =>
+      JSON.parse((await runHook('recall-directive.js', { session_id: sessionId, cwd: repo, prompt: text }, { ...env, ...extraEnv })).stdout);
+
+    await recall('w0');
+    failing = false;
+    const first = await recall('w1');
     assert.equal(stub.requests.length, 2);
-    await runHook('recall-directive.js', { session_id: 'w3', cwd: repo, prompt }, { ...env, SUPERMEMORY_DEDUPE_RECALL_QUERIES: 'false' });
+    assert.match(first.hookSpecificOutput.additionalContext, /02:00 UTC/);
+
+    const second = await recall('w2', ` ${prompt}  `);
+    assert.equal(stub.requests.length, 2);
+    assert.equal(second.hookSpecificOutput.additionalContext, first.hookSpecificOutput.additionalContext);
+
+    await recall('w1');
     assert.equal(stub.requests.length, 3);
+    await recall('w3', prompt, { SUPERMEMORY_DEDUPE_RECALL_QUERIES: 'false' });
+    assert.equal(stub.requests.length, 4);
   });
 });
 

@@ -49,6 +49,8 @@ const ENV_FLAGS = {
   dedupeOpeningPrompt: 'SUPERMEMORY_DEDUPE_OPENING_PROMPT',
   dedupeRecallQueries: 'SUPERMEMORY_DEDUPE_RECALL_QUERIES',
 };
+const ENV_TRUE = new Set(['true', '1', 'yes', 'on']);
+const ENV_FALSE = new Set(['false', '0', 'no', 'off']);
 
 function loadSettings() {
   const settings = { ...DEFAULT_SETTINGS };
@@ -65,7 +67,8 @@ function loadSettings() {
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
   for (const [key, name] of Object.entries(ENV_FLAGS)) {
     const value = process.env[name]?.trim().toLowerCase();
-    if (value === 'true' || value === 'false') settings[key] = value === 'true';
+    if (ENV_TRUE.has(value)) settings[key] = true;
+    else if (ENV_FALSE.has(value)) settings[key] = false;
   }
   return settings;
 }

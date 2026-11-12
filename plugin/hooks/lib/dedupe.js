@@ -6,9 +6,11 @@ const { atomicWriteJson } = require('./session-state');
 
 const STATE_DIR = path.join(os.homedir(), '.supermemory-claude');
 const OPENING_PROMPTS_FILE = path.join(STATE_DIR, 'opening-prompts.json');
-const RECALL_QUERIES_FILE = path.join(STATE_DIR, 'recall-queries.json');
+const RECALL_CACHE_FILE = path.join(STATE_DIR, 'recall-cache.json');
 const MAX_OPENING_PROMPTS = 500;
-const MAX_RECALL_QUERIES = 200;
+const MAX_RECALL_CACHE = 50;
+const MIN_OPENING_PROMPT_LENGTH = 200;
+const OPENING_PROMPT_TTL_MS = 24 * 60 * 60 * 1000;
 const RECALL_WINDOW_MS = 10 * 60 * 1000;
 
 function hashKey(...parts) {
@@ -19,12 +21,16 @@ function normalize(text) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-function readIndex(file) {
+function readIndex(file, ttlMs) {
+  const cutoff = Date.now() - ttlMs;
   try {
     const list = JSON.parse(fs.readFileSync(file, 'utf8'));
     return Array.isArray(list)
       ? list.filter(
-          (item) => typeof item?.key === 'string' && Number.isFinite(item.at),
+          (item) =>
+            typeof item?.key === 'string' &&
+            Number.isFinite(item.at) &&
+            item.at >= cutoff,
         )
       : [];
   } catch {
@@ -38,45 +44,63 @@ function writeIndex(file, list, max) {
   } catch {}
 }
 
+function openingPromptKey(containerTag, text) {
+  const normalized = normalize(text);
+  return normalized.length >= MIN_OPENING_PROMPT_LENGTH
+    ? hashKey(containerTag, normalized)
+    : null;
+}
+
 function hasOpeningPrompt(containerTag, text) {
-  const key = hashKey(containerTag, normalize(text));
-  return readIndex(OPENING_PROMPTS_FILE).some((item) => item.key === key);
+  const key = openingPromptKey(containerTag, text);
+  return Boolean(
+    key &&
+      readIndex(OPENING_PROMPTS_FILE, OPENING_PROMPT_TTL_MS).some(
+        (item) => item.key === key,
+      ),
+  );
 }
 
 function rememberOpeningPrompt(containerTag, text) {
-  const key = hashKey(containerTag, normalize(text));
-  const list = readIndex(OPENING_PROMPTS_FILE).filter(
+  const key = openingPromptKey(containerTag, text);
+  if (!key) return;
+  const list = readIndex(OPENING_PROMPTS_FILE, OPENING_PROMPT_TTL_MS).filter(
     (item) => item.key !== key,
   );
   list.push({ key, at: Date.now() });
   writeIndex(OPENING_PROMPTS_FILE, list, MAX_OPENING_PROMPTS);
 }
 
-// Only another session's identical query counts, so a user retrying in one session still recalls.
-function recalledElsewhere(containerTag, query, sessionId) {
+// Only another session's identical query is served from cache, so a user retrying in one session still gets fresh results.
+function cachedRecall(containerTag, query, sessionId) {
   const key = hashKey(containerTag, normalize(query));
   const session = hashKey(String(sessionId || ''));
-  const cutoff = Date.now() - RECALL_WINDOW_MS;
-  return readIndex(RECALL_QUERIES_FILE).some(
-    (item) => item.key === key && item.at >= cutoff && item.session !== session,
+  const hit = readIndex(RECALL_CACHE_FILE, RECALL_WINDOW_MS).find(
+    (item) =>
+      item.key === key &&
+      item.session !== session &&
+      Array.isArray(item.results),
   );
+  return hit ? hit.results : null;
 }
 
-function rememberRecallQuery(containerTag, query, sessionId) {
+function cacheRecall(containerTag, query, sessionId, results) {
   const key = hashKey(containerTag, normalize(query));
-  const session = hashKey(String(sessionId || ''));
-  const cutoff = Date.now() - RECALL_WINDOW_MS;
-  const list = readIndex(RECALL_QUERIES_FILE).filter(
-    (item) =>
-      item.at >= cutoff && !(item.key === key && item.session === session),
+  const list = readIndex(RECALL_CACHE_FILE, RECALL_WINDOW_MS).filter(
+    (item) => item.key !== key,
   );
-  list.push({ key, session, at: Date.now() });
-  writeIndex(RECALL_QUERIES_FILE, list, MAX_RECALL_QUERIES);
+  list.push({
+    key,
+    session: hashKey(String(sessionId || '')),
+    at: Date.now(),
+    results,
+  });
+  writeIndex(RECALL_CACHE_FILE, list, MAX_RECALL_CACHE);
 }
 
 module.exports = {
   hasOpeningPrompt,
   rememberOpeningPrompt,
-  recalledElsewhere,
-  rememberRecallQuery,
+  cachedRecall,
+  cacheRecall,
 };
