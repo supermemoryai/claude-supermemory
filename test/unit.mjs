@@ -837,6 +837,8 @@ describe('session scope', () => {
     assert.equal(stub.requests.length, 3);
     await recall('w3', prompt, { SUPERMEMORY_DEDUPE_RECALL_QUERIES: 'false' });
     assert.equal(stub.requests.length, 4);
+    await recall('w4', prompt, { SUPERMEMORY_CC_API_KEY: 'sm_other_account_key_0123456789' });
+    assert.equal(stub.requests.length, 5);
   });
 });
 

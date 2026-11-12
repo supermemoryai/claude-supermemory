@@ -71,9 +71,9 @@ function rememberOpeningPrompt(containerTag, text) {
   writeIndex(OPENING_PROMPTS_FILE, list, MAX_OPENING_PROMPTS);
 }
 
-// Only another session's identical query is served from cache, so a user retrying in one session still gets fresh results.
-function cachedRecall(containerTag, query, sessionId) {
-  const key = hashKey(containerTag, normalize(query));
+// Only another session's identical query under the same backend, credential and container is served from cache; a retry in one session searches again.
+function cachedRecall(scope, query, sessionId) {
+  const key = hashKey(scope, normalize(query));
   const session = hashKey(String(sessionId || ''));
   const hit = readIndex(RECALL_CACHE_FILE, RECALL_WINDOW_MS).find(
     (item) =>
@@ -84,8 +84,8 @@ function cachedRecall(containerTag, query, sessionId) {
   return hit ? hit.results : null;
 }
 
-function cacheRecall(containerTag, query, sessionId, results) {
-  const key = hashKey(containerTag, normalize(query));
+function cacheRecall(scope, query, sessionId, results) {
+  const key = hashKey(scope, normalize(query));
   const list = readIndex(RECALL_CACHE_FILE, RECALL_WINDOW_MS).filter(
     (item) => item.key !== key,
   );

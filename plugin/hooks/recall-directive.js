@@ -163,35 +163,31 @@ async function main() {
 
     const namespace = getNamespace(cwd);
     const query = prompt.slice(0, MAX_QUERY_LENGTH);
+    const projectConfig = loadProjectConfig(cwd);
+    const requestStarted = Date.now();
+    let apiKey;
+    try {
+      apiKey = await getAuthToken(cwd, projectConfig, 1000);
+    } catch {
+      writeOutput({ continue: true, suppressOutput: true });
+      return;
+    }
+    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const cacheScope = [baseUrl, apiKey, namespace].join('\n');
+
     let results = settings.dedupeRecallQueries
-      ? cachedRecall(namespace, query, input.session_id)
+      ? cachedRecall(cacheScope, query, input.session_id)
       : null;
     if (results) {
       debugLog(settings, 'Recall served from the recent-query cache');
     } else {
-      const projectConfig = loadProjectConfig(cwd);
-      const requestStarted = Date.now();
-      let apiKey;
-      try {
-        apiKey = await getAuthToken(cwd, projectConfig, 1000);
-      } catch {
-        writeOutput({ continue: true, suppressOutput: true });
-        return;
-      }
-
-      const response = await searchMemories(
-        getBaseUrl(cwd, projectConfig),
-        apiKey,
-        namespace,
-        query,
-        {
-          timeoutMs: Math.max(
-            1,
-            SEARCH_TIMEOUT_MS - (Date.now() - requestStarted),
-          ),
-          apiVersion: getApiVersion(cwd, projectConfig),
-        },
-      );
+      const response = await searchMemories(baseUrl, apiKey, namespace, query, {
+        timeoutMs: Math.max(
+          1,
+          SEARCH_TIMEOUT_MS - (Date.now() - requestStarted),
+        ),
+        apiVersion: getApiVersion(cwd, projectConfig),
+      });
 
       const batchHashes = new Set();
       results = (response || [])
@@ -213,7 +209,7 @@ async function main() {
           filepath: r.filepath,
         }));
       if (settings.dedupeRecallQueries) {
-        cacheRecall(namespace, query, input.session_id, results);
+        cacheRecall(cacheScope, query, input.session_id, results);
       }
     }
 
