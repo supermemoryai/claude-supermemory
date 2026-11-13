@@ -38,6 +38,7 @@ const {
   getEntriesSinceLastCapture,
   groupEntriesIntoTurns,
 } = require('../plugin/hooks/lib/transcript.js');
+const { scanOptions } = require('../plugin/hooks/lib/session-scope.js');
 
 function hash16(input) {
   return createHash('sha256').update(input).digest('hex').slice(0, 16);
@@ -778,10 +779,10 @@ describe('session scope', () => {
     const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
     const longTask = 'Run the nightly dependency audit: list every outdated package in the workspace, upgrade the ones with only patch or minor bumps, run the full test suite after each upgrade, and open a PR with the upgrades you make.';
     let task = longTask;
-    const save = async (sessionId, extraEnv = {}) => {
+    const save = async (sessionId, extraEnv = {}, reply = `Worker ${sessionId} upgraded lodash and opened the audit PR.`) => {
       const transcript = writeTranscript(makeTempDir(t, sessionId), [
         { type: 'user', uuid: `${sessionId}-u1`, message: { content: task } },
-        { type: 'assistant', uuid: `${sessionId}-a1`, message: { content: [{ type: 'text', text: `Worker ${sessionId} upgraded lodash and opened the audit PR.` }] } },
+        { type: 'assistant', uuid: `${sessionId}-a1`, message: { content: [{ type: 'text', text: reply }] } },
       ]);
       await runHook('capture.js', { session_id: sessionId, cwd: repo, transcript_path: transcript }, { ...env, ...extraEnv });
       return JSON.parse(stub.requests.at(-1).body);
@@ -799,10 +800,39 @@ describe('session scope', () => {
     const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
     writeFileSync(index, JSON.stringify(JSON.parse(readFileSync(index, 'utf8')).map((item) => ({ ...item, at: dayAgo }))));
     assert.ok((await save('worker-4')).content.includes(task));
+    assert.equal(statSync(index).mode & 0o777, 0o600);
+
+    const otherAccount = { SUPERMEMORY_CC_API_KEY: 'sm_other_account_key_0123456789' };
+    assert.ok((await save('worker-7', otherAccount)).content.includes(task));
+    assert.match((await save('worker-8', otherAccount)).content, /opening prompt already captured/);
+    assert.doesNotMatch(readFileSync(index, 'utf8'), /sm_test_key|sm_other_account_key/);
+
+    spawnSync('node', [join(HOOKS_DIR, 'lib', 'auth.js'), 'logout'], { env: { ...process.env, ...env } });
+    assert.equal(existsSync(index), false);
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'), JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+
+    writeFileSync(join(home, '.supermemory-claude', 'settings.json'), JSON.stringify({ signalExtraction: true }));
+    task = `${longTask} Remember to keep the lockfile committed.`;
+    const quietReply = (id) => `Worker ${id} is done and the PR is open.`;
+    assert.ok((await save('signal-1', {}, quietReply('signal-1'))).content.includes(task));
+    const repeated = await save('signal-2', {}, quietReply('signal-2'));
+    assert.match(repeated.content, /opening prompt already captured/);
+    assert.match(repeated.content, /Worker signal-2 is done/);
+    rmSync(join(home, '.supermemory-claude', 'settings.json'));
 
     task = 'Run the nightly dependency audit and open a PR with the upgrades you make.';
     assert.ok((await save('worker-5')).content.includes(task));
     assert.ok((await save('worker-6')).content.includes(task));
+  });
+
+  test('print-mode detection skips exactly one value after known value-taking options in ps output', () => {
+    const isPrint = (line) => scanOptions(line.split(' '), false).some((arg) => arg === '-p' || arg.startsWith('--output-format'));
+    assert.equal(isPrint('--model sonnet -p x'), true);
+    assert.equal(isPrint('--resume -p x'), true);
+    assert.equal(isPrint('--continue explain -p flag'), false);
+    assert.equal(isPrint('--resume abc -p x'), false);
+    assert.equal(isPrint('--add-dir a b -p x'), false);
+    assert.equal(scanOptions(['--continue', 'explain -p flag'], true).includes('-p'), false);
   });
 
   test('an identical recall query from another session within 10 minutes re-serves the cached result', async (t) => {

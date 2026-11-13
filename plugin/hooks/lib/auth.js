@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { RECALL_CACHE_FILE } = require('./dedupe');
+const { OPENING_PROMPTS_FILE, RECALL_CACHE_FILE } = require('./dedupe');
 
 const authSuccessHtml = fs.readFileSync(
   path.join(__dirname, '../templates/auth-success.html'),
@@ -427,6 +427,7 @@ async function settleAuth() {
 async function clearCredentials() {
   return withAuthLock(async (remaining) => {
     fs.rmSync(RECALL_CACHE_FILE, { force: true });
+    fs.rmSync(OPENING_PROMPTS_FILE, { force: true });
     const credentials = loadCredentials();
     if (credentials?.type === 'oauth' && credentials.refreshToken) {
       await oauthRequest(

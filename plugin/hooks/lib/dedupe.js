@@ -44,15 +44,15 @@ function writeIndex(file, list, max) {
   } catch {}
 }
 
-function openingPromptKey(containerTag, text) {
+function openingPromptKey(scope, text) {
   const normalized = normalize(text);
   return normalized.length >= MIN_OPENING_PROMPT_LENGTH
-    ? hashKey(containerTag, normalized)
+    ? hashKey(scope, normalized)
     : null;
 }
 
-function hasOpeningPrompt(containerTag, text) {
-  const key = openingPromptKey(containerTag, text);
+function hasOpeningPrompt(scope, text) {
+  const key = openingPromptKey(scope, text);
   return Boolean(
     key &&
       readIndex(OPENING_PROMPTS_FILE, OPENING_PROMPT_TTL_MS).some(
@@ -61,8 +61,8 @@ function hasOpeningPrompt(containerTag, text) {
   );
 }
 
-function rememberOpeningPrompt(containerTag, text) {
-  const key = openingPromptKey(containerTag, text);
+function rememberOpeningPrompt(scope, text) {
+  const key = openingPromptKey(scope, text);
   if (!key) return;
   const list = readIndex(OPENING_PROMPTS_FILE, OPENING_PROMPT_TTL_MS).filter(
     (item) => item.key !== key,
@@ -103,5 +103,6 @@ module.exports = {
   rememberOpeningPrompt,
   cachedRecall,
   cacheRecall,
+  OPENING_PROMPTS_FILE,
   RECALL_CACHE_FILE,
 };

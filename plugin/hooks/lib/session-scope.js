@@ -12,6 +12,39 @@ const TASK_NOTIFICATION_TAG = '<task-notification>';
 const USER_AUTHORED_SUBKINDS = new Set(['scheduled-trigger', 'session-inbox']);
 const PRINT_FLAGS = new Set(['-p', '--print']);
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'fish']);
+const VALUE_OPTIONS = new Set([
+  '--add-dir',
+  '--agent',
+  '--agents',
+  '--allowedTools',
+  '--allowed-tools',
+  '--append-system-prompt',
+  '--append-system-prompt-file',
+  '--betas',
+  '--debug-file',
+  '--disallowedTools',
+  '--disallowed-tools',
+  '--effort',
+  '--fallback-model',
+  '--input-format',
+  '--json-schema',
+  '--max-budget-usd',
+  '--max-turns',
+  '--mcp-config',
+  '--model',
+  '-n',
+  '--name',
+  '--output-format',
+  '--permission-mode',
+  '--permission-prompt-tool',
+  '--plugin-dir',
+  '--session-id',
+  '--setting-sources',
+  '--settings',
+  '--system-prompt',
+  '--system-prompt-file',
+  '--tools',
+]);
 
 function isOrchestrated() {
   return ORCHESTRATOR_ENV.some((name) => process.env[name]);
@@ -54,7 +87,18 @@ function readParentPid(pid) {
   );
 }
 
-// Argv of the Claude Code process that ran this hook (through `sh -c`): exact on Linux, else only options before the first positional; [] when unreadable.
+// Exact argv is scanned to `--`; whitespace-split ps output stops at the first token that is neither an option nor the value of a known value-taking option.
+function scanOptions(args, exact) {
+  const options = [];
+  for (let i = 0; i < args.length && args[i] !== '--'; i++) {
+    if (!exact && !args[i].startsWith('-')) break;
+    options.push(args[i]);
+    if (!exact && VALUE_OPTIONS.has(args[i])) i++;
+  }
+  return options;
+}
+
+// Option tokens of the Claude Code process that ran this hook (through `sh -c`); [] when unreadable.
 function hostOptions() {
   try {
     let args = readArgs(process.ppid);
@@ -64,13 +108,7 @@ function hostOptions() {
     const first = /^(node|bun)(\.exe)?$/.test(path.basename(args[0] || ''))
       ? 2
       : 1;
-    const exact = process.platform === 'linux';
-    const options = [];
-    for (const arg of args.slice(first)) {
-      if (arg === '--' || (!exact && !arg.startsWith('-'))) break;
-      options.push(arg);
-    }
-    return options;
+    return scanOptions(args.slice(first), process.platform === 'linux');
   } catch {
     return [];
   }
@@ -109,4 +147,4 @@ function getSkipReason(input, settings) {
   return null;
 }
 
-module.exports = { getSkipReason, isHostNotificationEntry };
+module.exports = { getSkipReason, isHostNotificationEntry, scanOptions };
