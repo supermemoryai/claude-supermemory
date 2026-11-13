@@ -5,7 +5,7 @@ const path = require('node:path');
 const { searchMemories } = require('./lib/api');
 const { BRAND, gray, red } = require('./lib/colors');
 const { getNamespace } = require('./lib/container-tag');
-const { recalledElsewhere, rememberRecallQuery } = require('./lib/dedupe');
+const { cacheRecall, cachedRecall } = require('./lib/dedupe');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
@@ -163,15 +163,6 @@ async function main() {
 
     const namespace = getNamespace(cwd);
     const query = prompt.slice(0, MAX_QUERY_LENGTH);
-    if (
-      settings.dedupeRecallQueries &&
-      recalledElsewhere(namespace, query, input.session_id)
-    ) {
-      debugLog(settings, 'Recall skipped: same query recalled recently');
-      writeOutput({ continue: true, suppressOutput: true });
-      return;
-    }
-
     const projectConfig = loadProjectConfig(cwd);
     const requestStarted = Date.now();
     let apiKey;
@@ -181,34 +172,46 @@ async function main() {
       writeOutput({ continue: true, suppressOutput: true });
       return;
     }
+    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const cacheScope = [baseUrl, apiKey, namespace].join('\n');
 
-    if (settings.dedupeRecallQueries) {
-      rememberRecallQuery(namespace, query, input.session_id);
-    }
-    const response = await searchMemories(
-      getBaseUrl(cwd, projectConfig),
-      apiKey,
-      namespace,
-      query,
-      {
-        timeoutMs: Math.max(1, SEARCH_TIMEOUT_MS - (Date.now() - requestStarted)),
+    let results = settings.dedupeRecallQueries
+      ? cachedRecall(cacheScope, query, input.session_id)
+      : null;
+    if (results) {
+      debugLog(settings, 'Recall served from the recent-query cache');
+    } else {
+      const response = await searchMemories(baseUrl, apiKey, namespace, query, {
+        timeoutMs: Math.max(
+          1,
+          SEARCH_TIMEOUT_MS - (Date.now() - requestStarted),
+        ),
         apiVersion: getApiVersion(cwd, projectConfig),
-      },
-    );
+      });
 
-    const batchHashes = new Set();
-    const results = (response || [])
-      .filter((r) => resultText(r))
-      .filter(
-        (r) => !Number.isFinite(r.similarity) || r.similarity >= MIN_SIMILARITY,
-      )
-      .filter((r) => {
-        const hash = hashText(resultText(r));
-        if (batchHashes.has(hash)) return false;
-        batchHashes.add(hash);
-        return true;
-      })
-      .slice(0, MAX_RESULTS);
+      const batchHashes = new Set();
+      results = (response || [])
+        .filter((r) => resultText(r))
+        .filter(
+          (r) =>
+            !Number.isFinite(r.similarity) || r.similarity >= MIN_SIMILARITY,
+        )
+        .filter((r) => {
+          const hash = hashText(resultText(r));
+          if (batchHashes.has(hash)) return false;
+          batchHashes.add(hash);
+          return true;
+        })
+        .slice(0, MAX_RESULTS)
+        .map((r) => ({
+          memory: resultText(r),
+          title: r.title,
+          filepath: r.filepath,
+        }));
+      if (settings.dedupeRecallQueries) {
+        cacheRecall(cacheScope, query, input.session_id, results);
+      }
+    }
 
     const sessionDir = getSessionDir(input.session_id);
     const seen = sessionDir ? readSeenHashes(sessionDir) : [];

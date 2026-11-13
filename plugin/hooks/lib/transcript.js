@@ -89,6 +89,15 @@ function getAssistantReplyText(entry) {
     .join('\n');
 }
 
+// A turn starts at a user text entry; "[Request interrupted by user…]" markers stay in the turn they interrupt.
+function startsTurn(entry) {
+  return (
+    entry.type === 'user' &&
+    hasTextContent(entry) &&
+    !getTextFromEntry(entry).startsWith('[Request interrupted by user')
+  );
+}
+
 function prepareCapture(
   transcriptPath,
   sessionId,
@@ -125,13 +134,13 @@ function prepareCapture(
   let newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
   const lastUuid = newEntries.at(-1)?.uuid || lastCapturedUuid || '';
   let inHostTurn = false;
+  const hostTurnEntries = new Set();
   if (!options.captureSubagents) {
-    newEntries = newEntries.filter((entry) => {
-      if (entry.type === 'user' && hasTextContent(entry)) {
-        inHostTurn = isHostNotificationEntry(entry);
-      }
-      return !inHostTurn;
-    });
+    for (const entry of entries) {
+      if (startsTurn(entry)) inHostTurn = isHostNotificationEntry(entry);
+      if (inHostTurn) hostTurnEntries.add(entry);
+    }
+    newEntries = newEntries.filter((entry) => !hostTurnEntries.has(entry));
   }
   const conversational = entries.filter(
     (entry) => entry.type === 'user' || entry.type === 'assistant',
