@@ -154,31 +154,21 @@ function prepareCapture(
     (reply) =>
       reply.afterUuid === lastUuid && reply.hash === replyHash(finalText),
   );
-  let openingPrompt = null;
   const opening = entries.find(
     (entry) =>
       entry.type === 'user' &&
       hasTextContent(entry) &&
       !isHostNotificationEntry(entry),
   );
-  const uncapturedEntries = newEntries
-    .filter((entry) => !capturedUuids.has(entry.uuid))
-    .map((entry) => {
-      if (entry !== opening) return entry;
-      const text = getTextFromEntry(entry);
-      if (!options.isKnownOpeningPrompt?.(text)) {
-        openingPrompt = text;
-        return entry;
-      }
-      const hash = replyHash(text.replace(/\s+/g, ' ').trim()).slice(0, 16);
-      return {
-        ...entry,
-        message: {
-          ...entry.message,
-          content: `[opening prompt already captured from this machine: ${hash}]`,
-        },
-      };
-    });
+  const uncapturedEntries = newEntries.filter(
+    (entry) => !capturedUuids.has(entry.uuid),
+  );
+  const openingText = uncapturedEntries.includes(opening)
+    ? getTextFromEntry(opening)
+    : null;
+  const openingKnown = Boolean(
+    openingText && options.isKnownOpeningPrompt?.(openingText),
+  );
 
   if (finalText && !alreadyFlushed && !alreadyCaptured && !inHostTurn) {
     uncapturedEntries.push({
@@ -192,8 +182,25 @@ function prepareCapture(
     newEntries: uncapturedEntries,
     lastUuid,
     pendingReplies,
-    openingPrompt,
-    openingUuid: opening?.uuid,
+    opening: openingText ? opening : null,
+    openingPrompt: openingKnown ? null : openingText,
+    markedOpening: openingKnown ? opening : null,
+  };
+}
+
+// Applied only while formatting, so signal selection always reads the original prompt.
+function withOpeningMarker(entry, markedOpening) {
+  if (entry !== markedOpening) return entry;
+  const hash = createHash('sha256')
+    .update(getTextFromEntry(entry).replace(/\s+/g, ' ').trim())
+    .digest('hex')
+    .slice(0, 16);
+  return {
+    ...entry,
+    message: {
+      ...entry.message,
+      content: `[opening prompt already captured from this machine: ${hash}]`,
+    },
   };
 }
 
@@ -571,8 +578,14 @@ function formatSignalEntries(
   const signalConfig = getSignalConfig(cwd);
   const { keywords, turnsBefore } = signalConfig;
 
-  const { newEntries, lastUuid, pendingReplies, openingPrompt, openingUuid } =
-    prepareCapture(transcriptPath, sessionId, lastAssistantMessage, options);
+  const {
+    newEntries,
+    lastUuid,
+    pendingReplies,
+    opening,
+    openingPrompt,
+    markedOpening,
+  } = prepareCapture(transcriptPath, sessionId, lastAssistantMessage, options);
 
   if (newEntries.length === 0) return null;
 
@@ -609,7 +622,9 @@ function formatSignalEntries(
   formattedParts.push(`<|turn_start|>${timestamp}`);
 
   for (const entry of allEntriesToFormat) {
-    const formatted = formatEntryTextOnly(entry);
+    const formatted = formatEntryTextOnly(
+      withOpeningMarker(entry, markedOpening),
+    );
     if (formatted) {
       formattedParts.push(formatted);
     }
@@ -625,11 +640,7 @@ function formatSignalEntries(
     formatted: result,
     lastUuid,
     pendingReplies,
-    openingPrompt:
-      openingPrompt &&
-      allEntriesToFormat.some((entry) => entry.uuid === openingUuid)
-        ? openingPrompt
-        : null,
+    openingPrompt: allEntriesToFormat.includes(opening) ? openingPrompt : null,
   };
 }
 
@@ -643,7 +654,7 @@ function formatNewEntries(
   toolUseMap = new Map();
   currentIncludeList = getIncludeTools(cwd);
 
-  const { newEntries, lastUuid, pendingReplies, openingPrompt } =
+  const { newEntries, lastUuid, pendingReplies, openingPrompt, markedOpening } =
     prepareCapture(transcriptPath, sessionId, lastAssistantMessage, options);
 
   if (newEntries.length === 0) return null;
@@ -656,7 +667,7 @@ function formatNewEntries(
   formattedParts.push(`<|turn_start|>${timestamp}`);
 
   for (const entry of newEntries) {
-    const formatted = formatEntry(entry);
+    const formatted = formatEntry(withOpeningMarker(entry, markedOpening));
     if (formatted) {
       formattedParts.push(formatted);
     }

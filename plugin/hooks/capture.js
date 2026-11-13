@@ -65,10 +65,12 @@ async function main() {
     }
 
     const namespace = getNamespace(cwd);
+    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const dedupeScope = [baseUrl, apiKey, namespace].join('\n');
     const captureOptions = {
       captureSubagents: settings.captureSubagents,
       isKnownOpeningPrompt: settings.dedupeOpeningPrompt
-        ? (text) => hasOpeningPrompt(namespace, text)
+        ? (text) => hasOpeningPrompt(dedupeScope, text)
         : null,
     };
     const delta = getSignalConfig(cwd).enabled
@@ -98,8 +100,6 @@ async function main() {
       return;
     }
 
-    const baseUrl = getBaseUrl(cwd, projectConfig);
-
     writeState(sessionId, 'capture', { status: 'saving', count: captured });
 
     const result = await addMemory(
@@ -125,7 +125,7 @@ async function main() {
 
     setLastCapturedUuid(sessionId, delta.lastUuid, delta.pendingReplies);
     if (settings.dedupeOpeningPrompt && delta.openingPrompt) {
-      rememberOpeningPrompt(namespace, delta.openingPrompt);
+      rememberOpeningPrompt(dedupeScope, delta.openingPrompt);
     }
     writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
     clearCaptureNotice();
