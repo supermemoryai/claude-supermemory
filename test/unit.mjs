@@ -38,6 +38,7 @@ const {
   getEntriesSinceLastCapture,
   groupEntriesIntoTurns,
 } = require('../plugin/hooks/lib/transcript.js');
+const { scanOptions } = require('../plugin/hooks/lib/session-scope.js');
 
 function hash16(input) {
   return createHash('sha256').update(input).digest('hex').slice(0, 16);
@@ -822,6 +823,16 @@ describe('session scope', () => {
     task = 'Run the nightly dependency audit and open a PR with the upgrades you make.';
     assert.ok((await save('worker-5')).content.includes(task));
     assert.ok((await save('worker-6')).content.includes(task));
+  });
+
+  test('print-mode detection skips exactly one value after known value-taking options in ps output', () => {
+    const isPrint = (line) => scanOptions(line.split(' '), false).some((arg) => arg === '-p' || arg.startsWith('--output-format'));
+    assert.equal(isPrint('--model sonnet -p x'), true);
+    assert.equal(isPrint('--resume -p x'), true);
+    assert.equal(isPrint('--continue explain -p flag'), false);
+    assert.equal(isPrint('--resume abc -p x'), false);
+    assert.equal(isPrint('--add-dir a b -p x'), false);
+    assert.equal(scanOptions(['--continue', 'explain -p flag'], true).includes('-p'), false);
   });
 
   test('an identical recall query from another session within 10 minutes re-serves the cached result', async (t) => {
