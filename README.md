@@ -224,6 +224,7 @@ For swarms that replay one task across many sessions, two local indexes in
 
 | Option | Description |
 | --- | --- |
+| `dreaming` | Memory extraction for captured turns: `dynamic` batches related documents, `instant` extracts each one at once, billed one extra operation per document (default: `dynamic`). |
 | `maxProfileItems` | Max memories in context (default: 5). |
 | `recallDirective` | Set to switch prompt recall from direct hook search to an advisory instruction Claude reasons over. |
 | `signalExtraction` | Only capture important turns (default: false). |

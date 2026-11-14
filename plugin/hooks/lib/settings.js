@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
   includeTools: [],
   maxProfileItems: 5,
   debug: false,
+  dreaming: 'dynamic',
   injectProfile: true,
   recallDirective: null,
   signalExtraction: false,
@@ -219,6 +220,13 @@ function getSignalConfig(cwd) {
   return { enabled, keywords, turnsBefore };
 }
 
+// Recall searches memories only, so a stalled dynamic batch leaves it empty (issue #156).
+function getDreamingMode(cwd, projectConfig) {
+  projectConfig = projectConfig || loadProjectConfig(cwd || process.cwd());
+  const mode = projectConfig?.dreaming ?? loadSettings().dreaming;
+  return mode === 'instant' ? 'instant' : 'dynamic';
+}
+
 function getRecallConfig(cwd) {
   const settings = loadSettings();
   const projectConfig = loadProjectConfig(cwd || process.cwd());
@@ -242,5 +250,6 @@ module.exports = {
   getIncludeTools,
   shouldIncludeTool,
   getSignalConfig,
+  getDreamingMode,
   getRecallConfig,
 };
