@@ -18,6 +18,7 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const { startBackgroundAuth, getOAuthConfig } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
+const { getSkipReason } = require('./lib/session-scope');
 const {
   pruneState,
   readCaptureNotice,
@@ -161,6 +162,12 @@ async function main() {
 
   try {
     const input = await readStdin();
+    const skipReason = getSkipReason(input, settings);
+    if (skipReason) {
+      debugLog(settings, 'Supermemory skipped', { reason: skipReason });
+      writeOutput({ continue: true, suppressOutput: true });
+      return;
+    }
     sessionId = input.session_id;
     const cwd = input.cwd || process.cwd();
 

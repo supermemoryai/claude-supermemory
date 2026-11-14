@@ -1,5 +1,7 @@
 const { addMemory, AGENT_SUPPORTING_CONTEXT } = require('./lib/api');
+const { hasOpeningPrompt, rememberOpeningPrompt } = require('./lib/dedupe');
 const { redactSecrets } = require('./lib/redact');
+const { getSkipReason } = require('./lib/session-scope');
 const {
   getNamespace,
   getProjectIdentity,
@@ -38,6 +40,12 @@ async function main() {
 
   try {
     const input = await readStdin();
+    const skipReason = getSkipReason(input, settings);
+    if (skipReason) {
+      debugLog(settings, 'Supermemory skipped', { reason: skipReason });
+      writeOutput({ continue: true });
+      return;
+    }
     const cwd = input.cwd || process.cwd();
     sessionId = input.session_id;
     const transcriptPath = input.transcript_path;
@@ -56,18 +64,29 @@ async function main() {
       return;
     }
 
+    const namespace = getNamespace(cwd);
+    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const dedupeScope = [baseUrl, apiKey, namespace].join('\n');
+    const captureOptions = {
+      captureSubagents: settings.captureSubagents,
+      isKnownOpeningPrompt: settings.dedupeOpeningPrompt
+        ? (text) => hasOpeningPrompt(dedupeScope, text)
+        : null,
+    };
     const delta = getSignalConfig(cwd).enabled
       ? formatSignalEntries(
           transcriptPath,
           sessionId,
           cwd,
           input.last_assistant_message,
+          captureOptions,
         )
       : formatNewEntries(
           transcriptPath,
           sessionId,
           cwd,
           input.last_assistant_message,
+          captureOptions,
         );
 
     const captured = readState(sessionId, 'capture')?.count || 0;
@@ -80,9 +99,6 @@ async function main() {
       writeOutput({ continue: true });
       return;
     }
-
-    const baseUrl = getBaseUrl(cwd, projectConfig);
-    const namespace = getNamespace(cwd);
 
     writeState(sessionId, 'capture', { status: 'saving', count: captured });
 
@@ -108,6 +124,9 @@ async function main() {
     );
 
     setLastCapturedUuid(sessionId, delta.lastUuid, delta.pendingReplies);
+    if (settings.dedupeOpeningPrompt && delta.openingPrompt) {
+      rememberOpeningPrompt(dedupeScope, delta.openingPrompt);
+    }
     writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
     clearCaptureNotice();
 

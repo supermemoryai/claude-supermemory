@@ -137,13 +137,59 @@ sm_scope: personal                   metadata on automatic captures
 
 The hash is derived from the normalized Git remote, so clones share memory while
 same-named repositories do not collide. Repositories without a remote fall back to
-a local path identity. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
+a local path identity. Linked worktrees (`git worktree add`, Conductor, Claude
+Squad, `claude --worktree`) resolve to the main checkout's identity, with or
+without a remote. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
 path instead of the remote identity.
 
 Unlike Codex, this plugin does not read older per-tool legacy containers
 (`codex_user_*`, `opencode_project_*`, and similar); it only ever uses the single
 unified identity above, overridden via the project `namespace` setting
 or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
+
+### Which sessions are remembered
+
+By default the hooks make no Supermemory calls (no profile, no prompt recall,
+no capture) for sessions nobody is typing into. They decide this only from
+signals Claude Code sets:
+
+| Session | Signal | Opt back in |
+| --- | --- | --- |
+| Background subagent results relayed to the main session | the `<task-notification>` turn (`origin.kind: "task-notification"` in the transcript; scheduled fires and inbox messages still count as yours) | `captureSubagents: true` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` |
+| `claude -p` and GitHub Action runs | `CLAUDE_CODE_ENTRYPOINT` is `claude-code-github-action`, or `sdk-cli` while that Claude Code process is itself in print mode (`CLAUDE_CODE_SESSION_ATTENDED=0`, or `-p` / `--print` / `--output-format` on older builds) | `captureHeadless: true` / `SUPERMEMORY_CAPTURE_HEADLESS=true` |
+
+Subagents never run these hooks: Claude Code fires only `SubagentStart` and
+`SubagentStop` inside them, so their work reaches memory only through the
+main session. Claude Code's own helper prompts (session titles, prompt
+suggestions, the auto mode classifier) never run these hooks either.
+
+An interactive `claude` that merely inherited `CLAUDE_CODE_ENTRYPOINT=sdk-cli`
+(for example one started from a shell a `claude -p` run spawned) stays on.
+Agent SDK apps (`sdk-ts`, `sdk-py`), including editors such as Zed that drive
+Claude Code over ACP, are treated as interactive and keep recall and capture.
+To keep an SDK app out of memory, run it without this plugin: leave `"user"`
+out of the SDK's `settingSources`, or disable the plugin for that app.
+
+Sessions started by Conductor or Vibe Kanban (`CONDUCTOR_WORKSPACE_PATH`,
+`CONDUCTOR_SESSION_ID` or `VK_WORKSPACE_ID` set) are real user work and stay
+on even though they run through `claude -p`; set `captureOrchestrated: false`
+or `SUPERMEMORY_CAPTURE_ORCHESTRATED=false` to turn them off. Crystal sets no
+such variable, so its `claude -p` sessions count as headless.
+
+For swarms that replay one task across many sessions, two local indexes in
+`~/.supermemory-claude` (hashes only) cut repeats:
+
+- **Opening prompt**: a session whose opening prompt (at least 200 characters)
+  was already captured from this machine for the same container in the last 24
+  hours saves the session with a one-line
+  `[opening prompt already captured from this machine: <hash>]` marker in place
+  of the prompt. Opt out with `dedupeOpeningPrompt: false` /
+  `SUPERMEMORY_DEDUPE_OPENING_PROMPT=false`.
+- **Recall query**: when the exact same query (whitespace-normalized) was
+  recalled successfully by another session for the same container in the last
+  10 minutes, the hook re-serves that result from `recall-cache.json` instead of calling the API. A
+  failed or timed-out search is never cached. Opt out with `dedupeRecallQueries: false` /
+  `SUPERMEMORY_DEDUPE_RECALL_QUERIES=false`.
 
 ## Configuration
 
@@ -158,6 +204,11 @@ or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
 | `SUPERMEMORY_REPO_TAG` | Project-scope override; used when no project scope setting is set. |
 | `SUPERMEMORY_ISOLATE_WORKTREES` | Set to `true` to key the project container on the worktree path instead of the Git remote. |
 | `SUPERMEMORY_DEBUG` | Set to `true` to enable debug logging. |
+| `SUPERMEMORY_CAPTURE_SUBAGENTS` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `captureSubagents`. |
+| `SUPERMEMORY_CAPTURE_HEADLESS` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `captureHeadless`. |
+| `SUPERMEMORY_CAPTURE_ORCHESTRATED` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `captureOrchestrated`. |
+| `SUPERMEMORY_DEDUPE_OPENING_PROMPT` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `dedupeOpeningPrompt`. |
+| `SUPERMEMORY_DEDUPE_RECALL_QUERIES` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `dedupeRecallQueries`. |
 
 ### Global settings (`~/.supermemory-claude/settings.json`)
 
@@ -180,6 +231,11 @@ or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
 | `signalTurnsBefore` | Context turns before signal (default: 3). |
 | `includeTools` | Tool calls to explicitly capture. |
 | `debug` | Enable debug logging (default: false). |
+| `captureSubagents` | Recall and capture for relayed background-subagent results (default: false). |
+| `captureHeadless` | Recall and capture for `claude -p` and GitHub Action runs (default: false). |
+| `captureOrchestrated` | Recall and capture for Conductor and Vibe Kanban sessions (default: true). |
+| `dedupeOpeningPrompt` | Replace an opening prompt of 200+ characters captured from this machine in the last 24 hours with a marker (default: true). |
+| `dedupeRecallQueries` | Re-serve the cached result of the same query another session recalled in the last 10 minutes (default: true). |
 
 ### Project config (`.claude/.supermemory-claude/config.json`)
 
