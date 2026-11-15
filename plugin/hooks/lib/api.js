@@ -1,4 +1,10 @@
 const { resolveApiVersion } = require('./settings');
+const { version: PLUGIN_VERSION } = require('../../.claude-plugin/plugin.json');
+
+const SOURCE_HEADERS = {
+  'x-sm-source': 'claude-code',
+  'x-sm-plugin-version': PLUGIN_VERSION,
+};
 
 const AGENT_SUPPORTING_CONTEXT = `Shared coding-agent memory for one software repository.
 
@@ -36,7 +42,7 @@ async function post(
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
-      'x-sm-source': 'claude-code',
+      ...SOURCE_HEADERS,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
@@ -74,7 +80,7 @@ function sdkClient(baseUrl, apiKey, options) {
   return new Supermemory({
     apiKey,
     baseUrl: baseUrl.replace(/\/+$/, ''),
-    headers: { 'x-sm-source': 'claude-code' },
+    headers: SOURCE_HEADERS,
     timeoutInSeconds: (options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000,
     maxRetries: 0,
   });
