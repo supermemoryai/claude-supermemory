@@ -1,6 +1,6 @@
 ---
 description: Index codebase into Supermemory for persistent context
-allowed-tools: ["Read", "Glob", "Grep", "Bash", "Task", "mcp__supermemory__add_memory", "mcp__plugin_supermemory_supermemory__add_memory", "mcp__claude_ai_supermemory__add_memory"]
+allowed-tools: ["Read", "Glob", "Grep", "Task", "mcp__supermemory__add_memory", "mcp__plugin_supermemory_supermemory__add_memory", "mcp__claude_ai_supermemory__add_memory"]
 ---
 
 # Codebase Indexing

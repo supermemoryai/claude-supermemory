@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { loadCredentials } = require('./auth');
+const { loadCredentials, getAccessToken, getOAuthConfig } = require('./auth');
 const { loadProjectConfig } = require('./project-config');
 
 const BASE_URL = 'https://api.supermemory.ai';
@@ -35,22 +35,45 @@ const DEFAULT_SETTINGS = {
     'deprecate',
   ],
   signalTurnsBefore: 3,
+  captureSubagents: false,
+  captureHeadless: false,
+  captureOrchestrated: true,
+  dedupeOpeningPrompt: true,
+  dedupeRecallQueries: true,
 };
+
+const ENV_FLAGS = {
+  captureSubagents: 'SUPERMEMORY_CAPTURE_SUBAGENTS',
+  captureHeadless: 'SUPERMEMORY_CAPTURE_HEADLESS',
+  captureOrchestrated: 'SUPERMEMORY_CAPTURE_ORCHESTRATED',
+  dedupeOpeningPrompt: 'SUPERMEMORY_DEDUPE_OPENING_PROMPT',
+  dedupeRecallQueries: 'SUPERMEMORY_DEDUPE_RECALL_QUERIES',
+};
+const ENV_TRUE = new Set(['true', '1', 'yes', 'on']);
+const ENV_FALSE = new Set(['false', '0', 'no', 'off']);
 
 function loadSettings() {
   const settings = { ...DEFAULT_SETTINGS };
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
-      Object.assign(settings, JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8')));
+      Object.assign(
+        settings,
+        JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8')),
+      );
     }
   } catch (err) {
     console.error(`Settings: Failed to load ${SETTINGS_FILE}: ${err.message}`);
   }
   if (process.env.SUPERMEMORY_DEBUG === 'true') settings.debug = true;
+  for (const [key, name] of Object.entries(ENV_FLAGS)) {
+    const value = process.env[name]?.trim().toLowerCase();
+    if (ENV_TRUE.has(value)) settings[key] = true;
+    else if (ENV_FALSE.has(value)) settings[key] = false;
+  }
   return settings;
 }
 
-function getApiKey(cwd, projectConfig) {
+async function getAuthToken(cwd, projectConfig, timeoutMs) {
   if (process.env.SUPERMEMORY_CC_API_KEY)
     return process.env.SUPERMEMORY_CC_API_KEY;
 
@@ -58,9 +81,18 @@ function getApiKey(cwd, projectConfig) {
   if (projectConfig?.apiKey) return projectConfig.apiKey;
 
   const credentials = loadCredentials();
+  if (credentials?.type === 'oauth') {
+    return getAccessToken(
+      getOAuthConfig(
+        getBaseUrl(cwd, projectConfig),
+        getMcpUrl(cwd, projectConfig),
+      ),
+      timeoutMs,
+    );
+  }
   if (credentials?.apiKey) return credentials.apiKey;
 
-  throw new Error('NO_API_KEY');
+  throw Object.assign(new Error('AUTH_REQUIRED'), { code: 'AUTH_REQUIRED' });
 }
 
 function normalizeBaseUrl(baseUrl) {
@@ -85,6 +117,54 @@ function getBaseUrl(cwd, projectConfig) {
     throw new Error('Invalid baseUrl: expected an absolute http(s) URL');
   }
   return normalized;
+}
+
+function getMcpUrl(cwd, projectConfig, defaultUrl) {
+  if (process.env.SUPERMEMORY_MCP_URL) {
+    const configured = normalizeBaseUrl(process.env.SUPERMEMORY_MCP_URL);
+    if (!configured) throw new Error('Invalid SUPERMEMORY_MCP_URL');
+    return configured;
+  }
+  const api = new URL(getBaseUrl(cwd, projectConfig));
+  if (defaultUrl !== undefined && api.href === new URL(BASE_URL).href) {
+    const declared = normalizeBaseUrl(defaultUrl);
+    if (!declared) throw new Error('Invalid default MCP URL');
+    return declared;
+  }
+  if (api.hostname.startsWith('api.')) {
+    api.hostname = api.hostname.replace(/^api\./, 'mcp.');
+    api.pathname = '/mcp';
+    api.search = '';
+    api.hash = '';
+    return api.toString();
+  }
+  throw new Error('Set SUPERMEMORY_MCP_URL for a custom Supermemory backend.');
+}
+
+function resolveApiVersion(baseUrl, configured) {
+  if (configured !== undefined && configured !== '') {
+    if (configured !== 'v5' && configured !== 'legacy') {
+      throw new Error('Invalid apiVersion: expected "v5" or "legacy"');
+    }
+    return configured;
+  }
+  const url = new URL(baseUrl);
+  const hosted =
+    url.origin === BASE_URL &&
+    !url.pathname.replace(/\/+$/, '') &&
+    !url.search &&
+    !url.hash &&
+    !url.username &&
+    !url.password;
+  return hosted ? 'v5' : 'legacy';
+}
+
+function getApiVersion(cwd, projectConfig) {
+  projectConfig = projectConfig || loadProjectConfig(cwd || process.cwd());
+  return resolveApiVersion(
+    getBaseUrl(cwd, projectConfig),
+    process.env.SUPERMEMORY_API_VERSION || projectConfig?.apiVersion,
+  );
 }
 
 function debugLog(settings, message, data) {
@@ -143,7 +223,8 @@ function getRecallConfig(cwd) {
   const settings = loadSettings();
   const projectConfig = loadProjectConfig(cwd || process.cwd());
   return {
-    directive: projectConfig?.recallDirective || settings.recallDirective || null,
+    directive:
+      projectConfig?.recallDirective || settings.recallDirective || null,
   };
 }
 
@@ -152,8 +233,11 @@ module.exports = {
   SETTINGS_FILE,
   DEFAULT_SETTINGS,
   loadSettings,
-  getApiKey,
+  getAuthToken,
   getBaseUrl,
+  getMcpUrl,
+  getApiVersion,
+  resolveApiVersion,
   debugLog,
   getIncludeTools,
   shouldIncludeTool,

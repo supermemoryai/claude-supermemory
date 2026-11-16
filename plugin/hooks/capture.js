@@ -1,22 +1,38 @@
-const { addSession, AGENT_ENTITY_CONTEXT } = require('./lib/api');
-const { readRawDelta } = require('./lib/session');
-const { redactSecrets } = require('./lib/redact');
 const {
-  getContainerTag,
+  addMemory,
+  addSession,
+  AGENT_SUPPORTING_CONTEXT,
+  useV5,
+} = require('./lib/api');
+const { hasOpeningPrompt, rememberOpeningPrompt } = require('./lib/dedupe');
+const { redactSecrets } = require('./lib/redact');
+const { readRawDelta } = require('./lib/session');
+const { getSkipReason } = require('./lib/session-scope');
+const {
+  getNamespace,
   getProjectIdentity,
   getProjectName,
 } = require('./lib/container-tag');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
   loadSettings,
-  getApiKey,
+  getAuthToken,
   getBaseUrl,
+  getApiVersion,
   debugLog,
+  getSignalConfig,
 } = require('./lib/settings');
 const { readStdin, writeOutput } = require('./lib/stdin');
+const {
+  formatNewEntries,
+  formatSignalEntries,
+  setLastCapturedUuid,
+} = require('./lib/transcript');
 const { getUserFriendlyError } = require('./lib/error-helpers');
+const { saveLastSession } = require('./lib/last-session');
 const {
   clearCaptureNotice,
+  readState,
   writeCaptureNotice,
   writeState,
 } = require('./lib/session-state');
@@ -30,6 +46,12 @@ async function main() {
 
   try {
     const input = await readStdin();
+    const skipReason = getSkipReason(input, settings);
+    if (skipReason) {
+      debugLog(settings, 'Supermemory skipped', { reason: skipReason });
+      writeOutput({ continue: true });
+      return;
+    }
     const cwd = input.cwd || process.cwd();
     sessionId = input.session_id;
     const transcriptPath = input.transcript_path;
@@ -42,45 +64,125 @@ async function main() {
 
     let apiKey;
     try {
-      apiKey = getApiKey(cwd, projectConfig);
+      apiKey = await getAuthToken(cwd, projectConfig);
     } catch {
       writeOutput({ continue: true });
       return;
     }
 
-    const session = readRawDelta(transcriptPath, sessionId);
-    if (!session) {
+    const namespace = getNamespace(cwd);
+    const baseUrl = getBaseUrl(cwd, projectConfig);
+    const apiVersion = getApiVersion(cwd, projectConfig);
+    const metadata = {
+      type: 'session_turn',
+      project: getProjectName(cwd),
+      sm_project_id: getProjectIdentity(cwd),
+      sm_scope: 'personal',
+      sm_capture_mode: 'automatic',
+      timestamp: new Date().toISOString(),
+    };
+    const captured = readState(sessionId, 'capture')?.count || 0;
+
+    if (useV5(baseUrl, { apiVersion }, namespace)) {
+      const session = readRawDelta(transcriptPath, sessionId);
+      if (!session) {
+        writeState(sessionId, 'capture', {
+          status: 'no_content',
+          count: captured,
+        });
+        debugLog(settings, 'No new content to save');
+        writeOutput({ continue: true });
+        return;
+      }
+      writeState(sessionId, 'capture', { status: 'saving', count: captured });
+      const result = await addSession(baseUrl, apiKey, namespace, session.raw, {
+        id: sessionId,
+        generation: session.generation,
+        offset: session.offset,
+        supportingContext: AGENT_SUPPORTING_CONTEXT,
+        metadata,
+        apiVersion,
+        timeoutMs: CAPTURE_TIMEOUT_MS,
+      });
+      session.commit();
+      writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
+      clearCaptureNotice();
+      try {
+        saveLastSession({ id: result.id, containerTag: namespace });
+      } catch {}
+      debugLog(settings, 'Session sent', {
+        bytes: session.raw.length,
+        generation: session.generation,
+        offset: session.offset,
+      });
       writeOutput({ continue: true });
       return;
     }
 
-    await addSession(
-      getBaseUrl(cwd, projectConfig),
+    const dedupeScope = [baseUrl, apiKey, namespace].join('\n');
+    const captureOptions = {
+      captureSubagents: settings.captureSubagents,
+      isKnownOpeningPrompt: settings.dedupeOpeningPrompt
+        ? (text) => hasOpeningPrompt(dedupeScope, text)
+        : null,
+    };
+    const delta = getSignalConfig(cwd).enabled
+      ? formatSignalEntries(
+          transcriptPath,
+          sessionId,
+          cwd,
+          input.last_assistant_message,
+          captureOptions,
+        )
+      : formatNewEntries(
+          transcriptPath,
+          sessionId,
+          cwd,
+          input.last_assistant_message,
+          captureOptions,
+        );
+
+    if (!delta) {
+      writeState(sessionId, 'capture', {
+        status: 'no_content',
+        count: captured,
+      });
+      debugLog(settings, 'No new content to save');
+      writeOutput({ continue: true });
+      return;
+    }
+
+    writeState(sessionId, 'capture', { status: 'saving', count: captured });
+
+    const result = await addMemory(
+      baseUrl,
       apiKey,
-      getContainerTag(cwd),
-      session.raw,
+      redactSecrets(delta.formatted),
+      namespace,
+      metadata,
       {
-        sessionId,
-        generation: session.generation,
-        offset: session.offset,
-        supportingContext: AGENT_ENTITY_CONTEXT,
-        metadata: {
-          type: 'session_turn',
-          project: getProjectName(cwd),
-          sm_project_id: getProjectIdentity(cwd),
-          sm_scope: 'personal',
-          sm_capture_mode: 'automatic',
-          timestamp: new Date().toISOString(),
-        },
+        id: sessionId,
+        supportingContext: AGENT_SUPPORTING_CONTEXT,
+        apiVersion,
         timeoutMs: CAPTURE_TIMEOUT_MS,
       },
     );
 
-    session.commit();
+    setLastCapturedUuid(sessionId, delta.lastUuid, delta.pendingReplies);
+    if (settings.dedupeOpeningPrompt && delta.openingPrompt) {
+      rememberOpeningPrompt(dedupeScope, delta.openingPrompt);
+    }
+    writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
     clearCaptureNotice();
-    debugLog(settings, 'Session sent', {
-      bytes: session.raw.length,
-      generation: session.generation,
+
+    if (result?.id) {
+      try {
+        saveLastSession({ id: result.id, containerTag: namespace });
+      } catch {}
+    }
+
+    debugLog(settings, 'Session turn saved', {
+      length: delta.formatted.length,
     });
     writeOutput({ continue: true });
   } catch (err) {
@@ -95,7 +197,7 @@ async function main() {
     debugLog(settings, 'Capture error', { error: friendly });
     console.error(`Supermemory: ${friendly}`);
     writeCaptureNotice(friendly);
-    if (sessionId) writeState(sessionId, 'capture', { status: 'error' });
+    writeState(sessionId, 'capture', { status: 'error' });
     writeOutput({ continue: true });
   }
 }

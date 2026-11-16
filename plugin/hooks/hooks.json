@@ -1,6 +1,8 @@
 {
-  "description": "Supermemory hooks: SessionStart loads project memories; UserPromptSubmit recalls memories relevant to the prompt; PreToolUse approves read-only Supermemory tool calls; Stop saves new conversation content to memory.",
-  "modules": ["./recall-strip.js"],
+  "description": "Supermemory hooks: SessionStart loads project memories; UserPromptSubmit recalls memories relevant to the prompt; PreToolUse displays read-only Supermemory activity without overriding permissions; Stop saves new conversation content to memory.",
+  "modules": [
+    "./recall-strip.js"
+  ],
   "hooks": {
     "SessionStart": [
       {

@@ -64,7 +64,7 @@ Then, only if you still have the old plugin installed, remove it:
 
 |  |  |
 | --- | --- |
-| 🧠 **Direct recall**<br>When authenticated, the hook searches substantive prompts before Claude sees them and injects fresh matches. No permission prompt or MCP tool call. | 🔎 **Hosted MCP tools**<br>`search_memory`, `listSpaces`, `whoAmI`, and more are available through the same credentials as the hooks, auto-approved when read-only. |
+| 🧠 **Direct recall**<br>When authenticated, the hook searches substantive prompts before Claude sees them and injects fresh matches. No permission prompt or MCP tool call. | 🔎 **Hosted MCP tools**<br>`search_memory`, `listSpaces`, `whoAmI`, and more are available through the same credentials as the hooks, subject to your Claude Code permissions. |
 | 💾 **Auto capture**<br>At the end of a session, the Stop hook saves new conversation content in the background. It asks Supermemory to retain durable context rather than transient Git state. | 🏷️ **Shared repo memory**<br>Automatic captures use the repository container shared with Codex and OpenCode and carry `sm_scope: personal` metadata. |
 | 🧭 **Deep multi-container search**<br>The `context-gatherer` subagent fans out several searches across a project's containers and returns a synthesized brief. | ⚙️ **Project config**<br>Per-repo settings, API keys, and container tag overrides via `.claude/.supermemory-claude/config.json`. |
 | 🗂️ **Codebase index**<br>`/supermemory:index` saves architecture, conventions, and how to run into this project's container. | 👋 **Session context**<br>Loads profile facts at session start and shows a welcome-back notice when you return to a project after 6+ hours. |
@@ -83,7 +83,7 @@ Claude Code supports hooks and MCP servers. `supermemory` registers four hooks, 
 | --- | --- | --- | --- |
 | 1 | `session-start` | `SessionStart` | Bootstraps auth and loads profile context plus a welcome-back notice. It does not install a statusline; an old auto-installed one is removed. |
 | 2 | `recall-directive` | `UserPromptSubmit` | Searches Supermemory directly with the prompt and injects fresh matches, deduplicated within the session. |
-| 3 | `recall-approve` | `PreToolUse` | Auto-allows read-only Supermemory MCP tools; writes still ask for permission. |
+| 3 | `recall-approve` | `PreToolUse` | Displays read-only Supermemory activity without approving calls or changing their input. |
 | 4 | `capture` | `Stop` | Saves the completed conversation delta in the background. |
 
 By default, recall is performed by the hook itself, not delegated to the model. It searches
@@ -94,6 +94,36 @@ tells Claude when it should decide to search on its own.
 The hooks are tolerant: if Supermemory is unreachable, the API key is missing, or
 anything else fails, they exit cleanly without breaking your Claude Code session.
 A capture that fails is reported the next time a session starts.
+
+### Directory review and permissions
+
+MCP tool calls follow your Claude Code permission rules. The `PreToolUse` hook
+only displays recall activity and records search counts; it does not approve
+calls or change their input. The index and status commands do not grant blanket
+shell access. Direct recall and capture still run as the lifecycle hooks you
+enabled when installing the plugin.
+
+The MCP declaration passes `https://mcp.supermemory.ai/mcp` literally to the
+bundled proxy as its default endpoint. The proxy uses that argument for the
+standard hosted configuration, shares the hooks' authentication, and supplies
+the current repository's default container. Existing `SUPERMEMORY_MCP_URL`,
+custom API backend settings, API keys, stored credentials, and OAuth refresh
+remain supported. Running the proxy without the argument retains its previous
+endpoint resolution.
+
+The optional recall-strip mod observes `classic.SessionStart` and
+`classic.UserPromptSubmit`. It calls `next(e)` with the original event, reads
+returned memory facts for its terminal display, and returns the same result
+object. It does not replace the first user message, edit permission settings,
+register agents, or alter tool inputs. Its `ui.render` hook adds the expandable
+recall strip above the terminal prompt. The Directory's static policy check may
+still require a reviewer to confirm this pass-through behavior.
+
+The credential-related review holds require review of the existing Supermemory
+sign-in flow, not a replacement of users' keys. Credentials are used for the
+configured Supermemory API and MCP endpoints. No new `user_config` credential
+flow is introduced by this change. Directory acceptance and publisher ownership
+must be confirmed in the submission portal; local validation is not approval.
 
 ### Shared Agents memory
 
@@ -107,13 +137,59 @@ sm_scope: personal                   metadata on automatic captures
 
 The hash is derived from the normalized Git remote, so clones share memory while
 same-named repositories do not collide. Repositories without a remote fall back to
-a local path identity. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
+a local path identity. Linked worktrees (`git worktree add`, Conductor, Claude
+Squad, `claude --worktree`) resolve to the main checkout's identity, with or
+without a remote. Set `SUPERMEMORY_ISOLATE_WORKTREES=true` to use the worktree
 path instead of the remote identity.
 
 Unlike Codex, this plugin does not read older per-tool legacy containers
 (`codex_user_*`, `opencode_project_*`, and similar); it only ever uses the single
-unified tag above, generated fresh or overridden via `repoContainerTag` /
-`SUPERMEMORY_REPO_TAG`.
+unified identity above, overridden via the project `namespace` setting
+or the compatible `repoContainerTag` / `SUPERMEMORY_REPO_TAG` settings.
+
+### Which sessions are remembered
+
+By default the hooks make no Supermemory calls (no profile, no prompt recall,
+no capture) for sessions nobody is typing into. They decide this only from
+signals Claude Code sets:
+
+| Session | Signal | Opt back in |
+| --- | --- | --- |
+| Background subagent results relayed to the main session | the `<task-notification>` turn (`origin.kind: "task-notification"` in the transcript; scheduled fires and inbox messages still count as yours) | `captureSubagents: true` / `SUPERMEMORY_CAPTURE_SUBAGENTS=true` |
+| `claude -p` and GitHub Action runs | `CLAUDE_CODE_ENTRYPOINT` is `claude-code-github-action`, or `sdk-cli` while that Claude Code process is itself in print mode (`CLAUDE_CODE_SESSION_ATTENDED=0`, or `-p` / `--print` / `--output-format` on older builds) | `captureHeadless: true` / `SUPERMEMORY_CAPTURE_HEADLESS=true` |
+
+Subagents never run these hooks: Claude Code fires only `SubagentStart` and
+`SubagentStop` inside them, so their work reaches memory only through the
+main session. Claude Code's own helper prompts (session titles, prompt
+suggestions, the auto mode classifier) never run these hooks either.
+
+An interactive `claude` that merely inherited `CLAUDE_CODE_ENTRYPOINT=sdk-cli`
+(for example one started from a shell a `claude -p` run spawned) stays on.
+Agent SDK apps (`sdk-ts`, `sdk-py`), including editors such as Zed that drive
+Claude Code over ACP, are treated as interactive and keep recall and capture.
+To keep an SDK app out of memory, run it without this plugin: leave `"user"`
+out of the SDK's `settingSources`, or disable the plugin for that app.
+
+Sessions started by Conductor or Vibe Kanban (`CONDUCTOR_WORKSPACE_PATH`,
+`CONDUCTOR_SESSION_ID` or `VK_WORKSPACE_ID` set) are real user work and stay
+on even though they run through `claude -p`; set `captureOrchestrated: false`
+or `SUPERMEMORY_CAPTURE_ORCHESTRATED=false` to turn them off. Crystal sets no
+such variable, so its `claude -p` sessions count as headless.
+
+For swarms that replay one task across many sessions, two local indexes in
+`~/.supermemory-claude` (hashes only) cut repeats:
+
+- **Opening prompt**: a session whose opening prompt (at least 200 characters)
+  was already captured from this machine for the same container in the last 24
+  hours saves the session with a one-line
+  `[opening prompt already captured from this machine: <hash>]` marker in place
+  of the prompt. Opt out with `dedupeOpeningPrompt: false` /
+  `SUPERMEMORY_DEDUPE_OPENING_PROMPT=false`.
+- **Recall query**: when the exact same query (whitespace-normalized) was
+  recalled successfully by another session for the same container in the last
+  10 minutes, the hook re-serves that result from `recall-cache.json` instead of calling the API. A
+  failed or timed-out search is never cached. Opt out with `dedupeRecallQueries: false` /
+  `SUPERMEMORY_DEDUPE_RECALL_QUERIES=false`.
 
 ## Configuration
 
@@ -122,12 +198,17 @@ unified tag above, generated fresh or overridden via `repoContainerTag` /
 | Variable | Purpose |
 | --- | --- |
 | `SUPERMEMORY_CC_API_KEY` | Your Supermemory API key (browser auth is preferred). |
-| `SUPERMEMORY_API_URL` | Override the Supermemory API base URL. |
+| `SUPERMEMORY_API_URL` | Override the Supermemory REST base URL; custom URLs default to legacy compatibility. |
 | `SUPERMEMORY_MCP_URL` | Override the hosted MCP endpoint (default `https://mcp.supermemory.ai/mcp`). |
 | `SUPERMEMORY_AUTH_URL` | Override the browser-auth base URL. |
-| `SUPERMEMORY_REPO_TAG` | Project-container override, used only when project config has no `repoContainerTag`. |
+| `SUPERMEMORY_REPO_TAG` | Project-scope override; used when no project scope setting is set. |
 | `SUPERMEMORY_ISOLATE_WORKTREES` | Set to `true` to key the project container on the worktree path instead of the Git remote. |
 | `SUPERMEMORY_DEBUG` | Set to `true` to enable debug logging. |
+| `SUPERMEMORY_CAPTURE_SUBAGENTS` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `captureSubagents`. |
+| `SUPERMEMORY_CAPTURE_HEADLESS` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `captureHeadless`. |
+| `SUPERMEMORY_CAPTURE_ORCHESTRATED` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `captureOrchestrated`. |
+| `SUPERMEMORY_DEDUPE_OPENING_PROMPT` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `dedupeOpeningPrompt`. |
+| `SUPERMEMORY_DEDUPE_RECALL_QUERIES` | `true`/`1`/`yes`/`on` or `false`/`0`/`no`/`off`; overrides `dedupeRecallQueries`. |
 
 ### Global settings (`~/.supermemory-claude/settings.json`)
 
@@ -150,16 +231,24 @@ unified tag above, generated fresh or overridden via `repoContainerTag` /
 | `signalTurnsBefore` | Context turns before signal (default: 3). |
 | `includeTools` | Tool calls to explicitly capture. |
 | `debug` | Enable debug logging (default: false). |
+| `captureSubagents` | Recall and capture for relayed background-subagent results (default: false). |
+| `captureHeadless` | Recall and capture for `claude -p` and GitHub Action runs (default: false). |
+| `captureOrchestrated` | Recall and capture for Conductor and Vibe Kanban sessions (default: true). |
+| `dedupeOpeningPrompt` | Replace an opening prompt of 200+ characters captured from this machine in the last 24 hours with a marker (default: true). |
+| `dedupeRecallQueries` | Re-serve the cached result of the same query another session recalled in the last 10 minutes (default: true). |
 
 ### Project config (`.claude/.supermemory-claude/config.json`)
 
 Per-repo overrides, created manually or via the settings your team shares:
 
+API key precedence is `SUPERMEMORY_CC_API_KEY`, project `apiKey`, then
+`~/.supermemory-claude/credentials.json`.
+
 ```json
 {
   "apiKey": "sm_...",
   "baseUrl": "https://api.supermemory.ai",
-  "repoContainerTag": "my-team-project",
+  "namespace": "my-team-project",
   "signalExtraction": true
 }
 ```
@@ -168,7 +257,32 @@ Per-repo overrides, created manually or via the settings your team shares:
 | --- | --- |
 | `apiKey` | Project-specific API key. |
 | `baseUrl` | Supermemory API URL. |
+| `namespace` | Canonical project scope, preserving the exact old container-tag value. |
 | `repoContainerTag` | Override the unified project container tag. Checked before `SUPERMEMORY_REPO_TAG`. |
+
+### Advanced self-hosted compatibility
+
+Hosted Supermemory uses v5 without a version choice. Existing custom REST URLs
+default to `legacy`, keeping v3 writes and v4 profiles for self-hosted servers
+older than 0.0.9. After upgrading the server, explicitly set
+`SUPERMEMORY_API_VERSION=v5` or project `apiVersion: "v5"`. The environment
+setting takes precedence; `legacy` is also an explicit rollback option for a
+server that still supports v3/v4. Invalid values fail closed for memory operations.
+There is no automatic version fallback after a failed request and no fallback to
+the hosted API. REST, MCP, and browser-auth URLs remain separate.
+
+Scope precedence is project `namespace`, project `repoContainerTag`,
+`SUPERMEMORY_REPO_TAG`, then the generated identity.
+Keep an existing override's exact value when renaming its setting: changing the
+value selects another space, not a data migration. V5 scopes allow 1–100 letters,
+digits, underscores, hyphens, or colons; invalid scopes are rejected before any
+request without rewriting config or capture cursors.
+
+Hosted Supermemory applies the same rule to legacy endpoints, so a scope with a
+dot, slash, or space must be renamed; the new value starts a new memory space.
+A self-hosted server that still accepts such a scope through v3/v4 can keep it with
+`SUPERMEMORY_API_VERSION=legacy` or project `apiVersion: "legacy"`. There is no
+automatic switch or failed-write retry across protocols.
 
 ## Commands
 
@@ -200,6 +314,14 @@ For information about how Supermemory collects, uses, and retains data, see the
 ## License
 
 MIT
+
+## Development runtime
+
+Marketplace installations need only Node 18 or later, not `npm install`.
+`plugin/hooks/vendor/supermemory.cjs` is the committed runtime bundle built from
+the exact official SDK and esbuild versions in `package-lock.json`. Maintainers
+reproduce it with `npm ci && npm run build:sdk`; CI rejects a stale bundle.
+The SDK's Apache-2.0 license is included alongside the generated bundle.
 
 ---
 

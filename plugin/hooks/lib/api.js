@@ -1,4 +1,6 @@
-const AGENT_ENTITY_CONTEXT = `Shared coding-agent memory for one software repository.
+const { resolveApiVersion } = require('./settings');
+
+const AGENT_SUPPORTING_CONTEXT = `Shared coding-agent memory for one software repository.
 
 RULES:
 - Try to remember things that a human would remember — a teammate recalls decisions and lessons, not what state the working tree was in
@@ -20,19 +22,21 @@ SKIP:
 - Transient command output and low-value implementation chatter
 - Granular details that do not help future work`;
 
-// Hooks sit between the user and Claude — a slow or dead network must never
-// hold the session hostage. Requests default to 3s; prompt recall allows 4s.
-// Callers treat failure as "no memory this time", not a blocker.
 const REQUEST_TIMEOUT_MS = 3000;
 
-async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS, extraHeaders = {}) {
+async function post(
+  baseUrl,
+  apiKey,
+  path,
+  body,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+) {
   const response = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       'x-sm-source': 'claude-code',
-      ...extraHeaders,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
@@ -48,31 +52,194 @@ async function post(baseUrl, apiKey, path, body, timeoutMs = REQUEST_TIMEOUT_MS,
   return response.json();
 }
 
-function getProfile(baseUrl, apiKey, containerTag, query, options = {}) {
-  return post(baseUrl, apiKey, '/v4/profile', { containerTag, q: query }, options.timeoutMs);
+function useV5(baseUrl, options, namespace) {
+  if (resolveApiVersion(baseUrl, options.apiVersion) !== 'v5') return false;
+  if (
+    typeof namespace !== 'string' ||
+    namespace.length > 100 ||
+    !/^[a-zA-Z0-9_:-]+$/.test(namespace)
+  ) {
+    throw Object.assign(
+      new Error(
+        'Rename project namespace/repoContainerTag or SUPERMEMORY_REPO_TAG: scopes allow only 1–100 letters, digits, underscores, hyphens, or colons, and a new value starts a new memory space. No request was sent.',
+      ),
+      { code: 'INVALID_NAMESPACE' },
+    );
+  }
+  return true;
 }
 
-function addMemory(baseUrl, apiKey, content, containerTag, metadata, options = {}) {
-  const body = {
-    content,
-    containerTag,
-    metadata: { sm_source: 'claude-code', ...metadata },
-  };
-  if (options.customId) body.customId = options.customId;
-  if (options.entityContext) body.entityContext = options.entityContext;
-  return post(baseUrl, apiKey, '/v3/documents', body, options.timeoutMs);
-}
-
-function addSession(baseUrl, apiKey, containerTag, raw, options = {}) {
-  const namespace = encodeURIComponent(containerTag);
-  const metadata = { sm_source: 'claude-code', ...(options.metadata || {}) };
-  if (options.generation != null) metadata.sm_session_generation = options.generation;
-  if (options.offset != null) metadata.sm_session_offset = options.offset;
-  const body = { content: raw, id: options.sessionId, metadata };
-  if (options.supportingContext) body.supportingContext = options.supportingContext;
-  return post(baseUrl, apiKey, `/ns/${namespace}/document`, body, options.timeoutMs, {
-    'x-sm-session': 'claude-code',
+function sdkClient(baseUrl, apiKey, options, headers = {}) {
+  const { Supermemory } = require('../vendor/supermemory.cjs');
+  return new Supermemory({
+    apiKey,
+    baseUrl: baseUrl.replace(/\/+$/, ''),
+    headers: { 'x-sm-source': 'claude-code', ...headers },
+    timeoutInSeconds: (options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000,
+    maxRetries: 0,
   });
 }
 
-module.exports = { AGENT_ENTITY_CONTEXT, getProfile, addMemory, addSession };
+function sdkOptions(options) {
+  const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  return {
+    timeoutInSeconds: timeoutMs / 1000,
+    maxRetries: 0,
+    abortSignal: AbortSignal.timeout(timeoutMs),
+  };
+}
+
+async function getProfile(baseUrl, apiKey, namespace, query, options = {}) {
+  if (!useV5(baseUrl, options, namespace)) {
+    return post(
+      baseUrl,
+      apiKey,
+      '/v4/profile',
+      { containerTag: namespace, q: query },
+      options.timeoutMs,
+    );
+  }
+  const response = await sdkClient(baseUrl, apiKey, options).profile(
+    namespace,
+    {},
+    sdkOptions(options),
+  );
+  if (
+    !Array.isArray(response?.profile?.static) ||
+    !Array.isArray(response?.profile?.dynamic)
+  ) {
+    throw new Error('Supermemory returned an invalid profile response.');
+  }
+  return response;
+}
+
+async function searchMemories(baseUrl, apiKey, namespace, query, options = {}) {
+  if (!useV5(baseUrl, options, namespace)) {
+    const response = await getProfile(
+      baseUrl,
+      apiKey,
+      namespace,
+      query,
+      options,
+    );
+    return response?.searchResults?.results || [];
+  }
+  const response = await sdkClient(baseUrl, apiKey, options).search(
+    namespace,
+    {
+      query,
+      searchMode: 'memories',
+      threshold: 0.55,
+      limit: 15,
+      rerank: 'none',
+      rewriteQuery: false,
+    },
+    sdkOptions(options),
+  );
+  if (!Array.isArray(response?.results)) {
+    throw new Error('Supermemory returned an invalid search response.');
+  }
+  return response.results;
+}
+
+function confirmAccepted(result) {
+  if (
+    typeof result?.id !== 'string' ||
+    !result.id ||
+    ![
+      'unknown',
+      'queued',
+      'extracting',
+      'chunking',
+      'embedding',
+      'indexing',
+      'done',
+    ].includes(result.status)
+  ) {
+    throw new Error(
+      'Supermemory did not confirm document acceptance; capture cursor retained.',
+    );
+  }
+  return result;
+}
+
+async function addMemory(
+  baseUrl,
+  apiKey,
+  content,
+  namespace,
+  metadata,
+  options = {},
+) {
+  if (useV5(baseUrl, options, namespace)) {
+    const result = await sdkClient(baseUrl, apiKey, options).add(
+      namespace,
+      {
+        content,
+        id: options.id ?? options.customId,
+        supportingContext: options.supportingContext ?? options.entityContext,
+        metadata: { sm_source: 'claude-code', ...metadata },
+        taskType: 'memory',
+        dreaming: 'dynamic',
+      },
+      sdkOptions(options),
+    );
+    return confirmAccepted(result);
+  }
+  const body = {
+    content,
+    containerTag: namespace,
+    metadata: { sm_source: 'claude-code', ...metadata },
+  };
+  if (options.id ?? options.customId)
+    body.customId = options.id ?? options.customId;
+  if (options.supportingContext ?? options.entityContext)
+    body.entityContext = options.supportingContext ?? options.entityContext;
+  const result = await post(
+    baseUrl,
+    apiKey,
+    '/v3/documents',
+    body,
+    options.timeoutMs,
+  );
+  if (typeof result?.id !== 'string' || !result.id) {
+    throw new Error(
+      'Supermemory did not confirm document acceptance; capture cursor retained.',
+    );
+  }
+  return result;
+}
+
+// Sends raw transcript records; the x-sm-session header asks the server to format them into memory.
+async function addSession(baseUrl, apiKey, namespace, raw, options = {}) {
+  const result = await sdkClient(baseUrl, apiKey, options, {
+    'x-sm-session': 'claude-code',
+  }).add(
+    namespace,
+    {
+      content: raw,
+      id: options.id,
+      supportingContext: options.supportingContext,
+      metadata: {
+        sm_source: 'claude-code',
+        ...options.metadata,
+        sm_session_generation: options.generation,
+        sm_session_offset: options.offset,
+      },
+      taskType: 'memory',
+      dreaming: 'dynamic',
+    },
+    sdkOptions(options),
+  );
+  return confirmAccepted(result);
+}
+
+module.exports = {
+  AGENT_SUPPORTING_CONTEXT,
+  AGENT_ENTITY_CONTEXT: AGENT_SUPPORTING_CONTEXT,
+  getProfile,
+  searchMemories,
+  addMemory,
+  addSession,
+  useV5,
+};

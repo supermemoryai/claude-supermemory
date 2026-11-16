@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createHash, randomUUID } = require('node:crypto');
 const { atomicWriteJson } = require('./session-state');
+const { isHostNotificationEntry } = require('./session-scope');
 const {
   getIncludeTools,
   shouldIncludeTool,
@@ -88,7 +89,21 @@ function getAssistantReplyText(entry) {
     .join('\n');
 }
 
-function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
+// A turn starts at a user text entry; "[Request interrupted by user…]" markers stay in the turn they interrupt.
+function startsTurn(entry) {
+  return (
+    entry.type === 'user' &&
+    hasTextContent(entry) &&
+    !getTextFromEntry(entry).startsWith('[Request interrupted by user')
+  );
+}
+
+function prepareCapture(
+  transcriptPath,
+  sessionId,
+  lastAssistantMessage,
+  options = {},
+) {
   const entries = parseTranscript(transcriptPath);
   const tracker = readCaptureTracker(sessionId);
   const lastCapturedUuid = tracker.lastUuid;
@@ -116,8 +131,17 @@ function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
     return true;
   });
 
-  const newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
+  let newEntries = getEntriesSinceLastCapture(entries, lastCapturedUuid);
   const lastUuid = newEntries.at(-1)?.uuid || lastCapturedUuid || '';
+  let inHostTurn = false;
+  const hostTurnEntries = new Set();
+  if (!options.captureSubagents) {
+    for (const entry of entries) {
+      if (startsTurn(entry)) inHostTurn = isHostNotificationEntry(entry);
+      if (inHostTurn) hostTurnEntries.add(entry);
+    }
+    newEntries = newEntries.filter((entry) => !hostTurnEntries.has(entry));
+  }
   const conversational = entries.filter(
     (entry) => entry.type === 'user' || entry.type === 'assistant',
   );
@@ -130,11 +154,23 @@ function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
     (reply) =>
       reply.afterUuid === lastUuid && reply.hash === replyHash(finalText),
   );
+  const opening = entries.find(
+    (entry) =>
+      entry.type === 'user' &&
+      hasTextContent(entry) &&
+      !isHostNotificationEntry(entry),
+  );
   const uncapturedEntries = newEntries.filter(
     (entry) => !capturedUuids.has(entry.uuid),
   );
+  const openingText = uncapturedEntries.includes(opening)
+    ? getTextFromEntry(opening)
+    : null;
+  const openingKnown = Boolean(
+    openingText && options.isKnownOpeningPrompt?.(openingText),
+  );
 
-  if (finalText && !alreadyFlushed && !alreadyCaptured) {
+  if (finalText && !alreadyFlushed && !alreadyCaptured && !inHostTurn) {
     uncapturedEntries.push({
       type: 'assistant',
       message: { content: [{ type: 'text', text: lastAssistantMessage }] },
@@ -142,7 +178,30 @@ function prepareCapture(transcriptPath, sessionId, lastAssistantMessage) {
     pendingReplies.push({ afterUuid: lastUuid, hash: replyHash(finalText) });
   }
 
-  return { newEntries: uncapturedEntries, lastUuid, pendingReplies };
+  return {
+    newEntries: uncapturedEntries,
+    lastUuid,
+    pendingReplies,
+    opening: openingText ? opening : null,
+    openingPrompt: openingKnown ? null : openingText,
+    markedOpening: openingKnown ? opening : null,
+  };
+}
+
+// Applied only while formatting, so signal selection always reads the original prompt.
+function withOpeningMarker(entry, markedOpening) {
+  if (entry !== markedOpening) return entry;
+  const hash = createHash('sha256')
+    .update(getTextFromEntry(entry).replace(/\s+/g, ' ').trim())
+    .digest('hex')
+    .slice(0, 16);
+  return {
+    ...entry,
+    message: {
+      ...entry.message,
+      content: `[opening prompt already captured from this machine: ${hash}]`,
+    },
+  };
 }
 
 function parseTranscript(transcriptPath) {
@@ -511,6 +570,7 @@ function formatSignalEntries(
   sessionId,
   cwd,
   lastAssistantMessage,
+  options = {},
 ) {
   toolUseMap = new Map();
   currentIncludeList = getIncludeTools(cwd);
@@ -518,11 +578,14 @@ function formatSignalEntries(
   const signalConfig = getSignalConfig(cwd);
   const { keywords, turnsBefore } = signalConfig;
 
-  const { newEntries, lastUuid, pendingReplies } = prepareCapture(
-    transcriptPath,
-    sessionId,
-    lastAssistantMessage,
-  );
+  const {
+    newEntries,
+    lastUuid,
+    pendingReplies,
+    opening,
+    openingPrompt,
+    markedOpening,
+  } = prepareCapture(transcriptPath, sessionId, lastAssistantMessage, options);
 
   if (newEntries.length === 0) return null;
 
@@ -559,7 +622,9 @@ function formatSignalEntries(
   formattedParts.push(`<|turn_start|>${timestamp}`);
 
   for (const entry of allEntriesToFormat) {
-    const formatted = formatEntryTextOnly(entry);
+    const formatted = formatEntryTextOnly(
+      withOpeningMarker(entry, markedOpening),
+    );
     if (formatted) {
       formattedParts.push(formatted);
     }
@@ -571,7 +636,12 @@ function formatSignalEntries(
 
   if (result.length < 100) return null;
 
-  return { formatted: result, lastUuid, pendingReplies };
+  return {
+    formatted: result,
+    lastUuid,
+    pendingReplies,
+    openingPrompt: allEntriesToFormat.includes(opening) ? openingPrompt : null,
+  };
 }
 
 function formatNewEntries(
@@ -579,15 +649,13 @@ function formatNewEntries(
   sessionId,
   cwd,
   lastAssistantMessage,
+  options = {},
 ) {
   toolUseMap = new Map();
   currentIncludeList = getIncludeTools(cwd);
 
-  const { newEntries, lastUuid, pendingReplies } = prepareCapture(
-    transcriptPath,
-    sessionId,
-    lastAssistantMessage,
-  );
+  const { newEntries, lastUuid, pendingReplies, openingPrompt, markedOpening } =
+    prepareCapture(transcriptPath, sessionId, lastAssistantMessage, options);
 
   if (newEntries.length === 0) return null;
 
@@ -599,7 +667,7 @@ function formatNewEntries(
   formattedParts.push(`<|turn_start|>${timestamp}`);
 
   for (const entry of newEntries) {
-    const formatted = formatEntry(entry);
+    const formatted = formatEntry(withOpeningMarker(entry, markedOpening));
     if (formatted) {
       formattedParts.push(formatted);
     }
@@ -611,7 +679,7 @@ function formatNewEntries(
 
   if (result.length < 100) return null;
 
-  return { formatted: result, lastUuid, pendingReplies };
+  return { formatted: result, lastUuid, pendingReplies, openingPrompt };
 }
 
 module.exports = {
