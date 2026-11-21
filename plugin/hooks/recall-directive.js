@@ -9,6 +9,11 @@ const { cacheRecall, cachedRecall } = require('./lib/dedupe');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
+  recallGuidance,
+  guidanceSent,
+  markGuidanceSent,
+} = require('./lib/recall-guidance');
+const {
   loadSettings,
   getAuthToken,
   getBaseUrl,
@@ -31,7 +36,8 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 // to spend a tool call. A configured recallDirective restores advisory mode.
 const MIN_PROMPT_LENGTH = 12;
 const MAX_QUERY_LENGTH = 500;
-const MAX_RESULTS = 15;
+const MAX_CANDIDATES = 15;
+const MAX_RESULTS = 6;
 const MAX_RESULT_CHARS = 300;
 const MIN_SIMILARITY = 0.55;
 const SEARCH_TIMEOUT_MS = 4000;
@@ -115,7 +121,7 @@ Worth a call when the user refers to past decisions, earlier sessions, or says
 </supermemory-recall>`;
 }
 
-function formatRecall(results, namespace) {
+function formatRecall(results, guidance) {
   const lines = results.map((r) => {
     const text = resultText(r).replace(/\s+/g, ' ').slice(0, MAX_RESULT_CHARS);
     const title =
@@ -126,9 +132,7 @@ function formatRecall(results, namespace) {
   return `<supermemory-recall>
 ◪ Recalled from supermemory for this prompt (relevance-ranked):
 ${lines.join('\n')}
-
-When one of these shapes your answer, credit it naturally with the ◪ prefix (e.g. "◪ earlier you decided X"); if you name the source, say "from supermemory" — never "from memory". For deeper history, call the supermemory search_memory tool — it defaults to this project's container (${namespace}). Pass containerTag only to search a different space. Or launch the context-gatherer agent.
-</supermemory-recall>`;
+</supermemory-recall>${guidance ? `\n${guidance}` : ''}`;
 }
 
 async function main() {
@@ -202,7 +206,7 @@ async function main() {
           batchHashes.add(hash);
           return true;
         })
-        .slice(0, MAX_RESULTS)
+        .slice(0, MAX_CANDIDATES)
         .map((r) => ({
           memory: resultText(r),
           title: r.title,
@@ -216,8 +220,9 @@ async function main() {
     const sessionDir = getSessionDir(input.session_id);
     const seen = sessionDir ? readSeenHashes(sessionDir) : [];
     const seenSet = new Set(seen);
-    const fresh = results.filter((r) => !seenSet.has(hashText(resultText(r))));
-    const repeats = results.length - fresh.length;
+    const unseen = results.filter((r) => !seenSet.has(hashText(resultText(r))));
+    const fresh = unseen.slice(0, MAX_RESULTS);
+    const repeats = results.length - unseen.length;
 
     if (input.session_id) {
       const prev = readState(input.session_id, 'search') || {};
@@ -235,9 +240,6 @@ async function main() {
     });
 
     if (fresh.length === 0) {
-      // Only when the container is genuinely empty: if results came back but
-      // were all repeats, formatRecall already delivered the same guidance
-      // earlier this session.
       if (results.length === 0 && sessionDir && !discoverySent(sessionDir)) {
         markDiscoverySent(sessionDir);
         writeOutput({
@@ -266,7 +268,12 @@ async function main() {
       }
     }
 
-    const context = formatRecall(fresh, namespace);
+    const needsGuidance = !guidanceSent(sessionDir);
+    const context = formatRecall(
+      fresh,
+      needsGuidance ? recallGuidance(namespace) : null,
+    );
+    if (needsGuidance) markGuidanceSent(sessionDir);
     // ~4 chars/token: close enough to show what the injection costs.
     const tok = gray(`(${Math.round(context.length / 4)} tok)`);
     const label = repeats
