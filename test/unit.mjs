@@ -644,6 +644,97 @@ describe('capture hook', () => {
   });
 });
 
+describe('v5 session capture', () => {
+  const line = (entry) => `${JSON.stringify(entry)}\n`;
+  const user = (uuid, content) => ({ type: 'user', uuid, message: { content } });
+  const reply = (uuid, text) => ({
+    type: 'assistant',
+    uuid,
+    message: { content: [{ type: 'text', text }] },
+  });
+
+  async function setup(t, name) {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+    const transcript = join(makeTempDir(t, name), 'session.jsonl');
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ id: 'doc_v5', status: 'queued' }));
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url,
+      SUPERMEMORY_API_VERSION: 'v5' };
+    const run = (extra = {}) => runHook('capture.js',
+      { session_id: name, cwd: repo, transcript_path: transcript, ...extra }, env);
+    const sent = () => stub.requests.map((request) => JSON.parse(request.body));
+    return { transcript, run, sent };
+  }
+
+  test('redacts secrets and private blocks and drops fully private turns', async (t) => {
+    const { transcript, run, sent } = await setup(t, 'v5-redact');
+    const first = [
+      user('u1', 'deploy with OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwx and <private>codename falcon</private>'),
+      reply('a1', 'Deployed.'),
+    ].map(line).join('');
+    writeFileSync(transcript, first);
+    assert.equal((await run()).code, 0);
+    assert.equal(sent().length, 1);
+    assert.equal(sent()[0].metadata.sm_session_offset, 0);
+    assert.match(sent()[0].content, /\[REDACTED:/);
+    assert.match(sent()[0].content, /\[REDACTED\]/);
+    assert.doesNotMatch(sent()[0].content, /sk-proj-abcdefghijklmnopqrstuvwx|falcon/);
+
+    writeFileSync(transcript, first + [
+      user('u2', '<private>my bank pin is 4321</private>'),
+      reply('a2', 'Noted 4321.'),
+      user('u3', 'what is next?'),
+      reply('a3', 'Ship it.'),
+    ].map(line).join(''));
+    await run();
+    assert.equal(sent().length, 2);
+    assert.equal(sent()[1].metadata.sm_session_offset, Buffer.byteLength(first));
+    assert.doesNotMatch(sent()[1].content, /4321/);
+    assert.match(sent()[1].content, /Ship it\./);
+  });
+
+  test('sends an unflushed final reply once and skips it when it lands', async (t) => {
+    const { transcript, run, sent } = await setup(t, 'v5-reply');
+    writeFileSync(transcript, line(user('u1', 'summarize the plan')));
+    await run({ last_assistant_message: 'The plan has three steps.' });
+    assert.equal(sent().length, 1);
+    assert.match(sent()[0].content, /The plan has three steps\./);
+
+    writeFileSync(transcript, line(user('u1', 'summarize the plan'))
+      + line(reply('a1', 'The plan has three steps.')));
+    await run({ last_assistant_message: 'The plan has three steps.' });
+    assert.equal(sent().length, 1);
+
+    writeFileSync(transcript, line(user('u1', 'summarize the plan'))
+      + line(reply('a1', 'The plan has three steps.'))
+      + line(user('u2', 'and the risks?')) + line(reply('a2', 'Mostly timing.')));
+    await run({ last_assistant_message: 'Mostly timing.' });
+    assert.equal(sent().length, 2);
+    assert.doesNotMatch(sent()[1].content, /three steps/);
+    assert.match(sent()[1].content, /Mostly timing\./);
+  });
+
+  test('a session without a cursor starts at its latest turn', async (t) => {
+    const { transcript, run, sent } = await setup(t, 'v5-bootstrap');
+    writeFileSync(transcript, [
+      user('u1', 'old pre-install question'),
+      reply('a1', 'old answer'),
+      user('u2', 'new question'),
+      reply('a2', 'new answer'),
+    ].map(line).join(''));
+    await run();
+    assert.equal(sent().length, 1);
+    assert.doesNotMatch(sent()[0].content, /old pre-install/);
+    assert.match(sent()[0].content, /new question/);
+    assert.ok(sent()[0].metadata.sm_session_offset > 0);
+  });
+});
+
 describe('session scope', () => {
   function writeTranscript(dir, entries) {
     const file = join(dir, 'session.jsonl');

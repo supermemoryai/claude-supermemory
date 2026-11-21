@@ -84,8 +84,13 @@ async function main() {
     const captured = readState(sessionId, 'capture')?.count || 0;
 
     if (useV5(baseUrl, { apiVersion }, namespace)) {
-      const session = readRawDelta(transcriptPath, sessionId);
-      if (!session) {
+      const session = readRawDelta(transcriptPath, sessionId, {
+        destination: `${baseUrl}\n${namespace}`,
+        lastAssistantMessage: input.last_assistant_message,
+        captureSubagents: settings.captureSubagents,
+      });
+      if (session && !session.raw) session.commit();
+      if (!session?.raw) {
         writeState(sessionId, 'capture', {
           status: 'no_content',
           count: captured,
