@@ -6,7 +6,7 @@ const {
 } = require('./lib/api');
 const { hasOpeningPrompt, rememberOpeningPrompt } = require('./lib/dedupe');
 const { redactSecrets } = require('./lib/redact');
-const { readRawDelta } = require('./lib/session');
+const { readRawDelta, withSessionLock } = require('./lib/session');
 const { getSkipReason } = require('./lib/session-scope');
 const {
   getNamespace,
@@ -84,42 +84,49 @@ async function main() {
     const captured = readState(sessionId, 'capture')?.count || 0;
 
     if (useV5(baseUrl, { apiVersion }, namespace)) {
-      const session = readRawDelta(transcriptPath, sessionId, {
-        destination: `${baseUrl}\n${namespace}`,
-        lastAssistantMessage: input.last_assistant_message,
-        captureSubagents: settings.captureSubagents,
-      });
-      if (session && !session.raw) session.commit();
-      if (!session?.raw) {
-        writeState(sessionId, 'capture', {
-          status: 'no_content',
-          count: captured,
+      const acquired = await withSessionLock(sessionId, async () => {
+        const session = readRawDelta(transcriptPath, sessionId, {
+          destination: `${baseUrl}\n${namespace}`,
+          lastAssistantMessage: input.last_assistant_message,
+          captureSubagents: settings.captureSubagents,
         });
-        debugLog(settings, 'No new content to save');
-        writeOutput({ continue: true });
-        return;
+        if (session && !session.raw) session.commit();
+        if (!session?.raw) {
+          writeState(sessionId, 'capture', {
+            status: 'no_content',
+            count: captured,
+          });
+          debugLog(settings, 'No new content to save');
+          return;
+        }
+        writeState(sessionId, 'capture', { status: 'saving', count: captured });
+        const result = await addSession(baseUrl, apiKey, namespace, session.raw, {
+          id: sessionId,
+          generation: session.generation,
+          offset: session.offset,
+          supportingContext: AGENT_SUPPORTING_CONTEXT,
+          metadata,
+          apiVersion,
+          timeoutMs: CAPTURE_TIMEOUT_MS,
+        });
+        session.commit();
+        writeState(sessionId, 'capture', {
+          status: 'saved',
+          count: captured + 1,
+        });
+        clearCaptureNotice();
+        try {
+          saveLastSession({ id: result.id, containerTag: namespace });
+        } catch {}
+        debugLog(settings, 'Session sent', {
+          bytes: session.raw.length,
+          generation: session.generation,
+          offset: session.offset,
+        });
+      });
+      if (!acquired) {
+        debugLog(settings, 'Capture lock busy; delta left for the next Stop');
       }
-      writeState(sessionId, 'capture', { status: 'saving', count: captured });
-      const result = await addSession(baseUrl, apiKey, namespace, session.raw, {
-        id: sessionId,
-        generation: session.generation,
-        offset: session.offset,
-        supportingContext: AGENT_SUPPORTING_CONTEXT,
-        metadata,
-        apiVersion,
-        timeoutMs: CAPTURE_TIMEOUT_MS,
-      });
-      session.commit();
-      writeState(sessionId, 'capture', { status: 'saved', count: captured + 1 });
-      clearCaptureNotice();
-      try {
-        saveLastSession({ id: result.id, containerTag: namespace });
-      } catch {}
-      debugLog(settings, 'Session sent', {
-        bytes: session.raw.length,
-        generation: session.generation,
-        offset: session.offset,
-      });
       writeOutput({ continue: true });
       return;
     }

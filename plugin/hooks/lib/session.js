@@ -13,6 +13,9 @@ const {
 
 const SESSION_DIR = path.join(os.homedir(), '.supermemory-claude', 'session');
 const HEAD_BYTES = 4096;
+const LOCK_RETRY_MS = 50;
+const LOCK_WAIT_MS = 25000;
+const LOCK_STALE_MS = 35000;
 const PRIVATE_BLOCK = /<private>[\s\S]*?<\/private>/gi;
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -222,4 +225,35 @@ function readRawDelta(transcriptPath, sessionId, options = {}) {
   }
 }
 
-module.exports = { readRawDelta };
+// Async Stop hooks can overlap; holding the lock across read, upload and commit stops a slower upload from rewinding the cursor.
+async function withSessionLock(sessionId, action) {
+  fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
+  const lockFile = path.join(SESSION_DIR, `${sessionId}.lock`);
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  while (true) {
+    try {
+      fs.closeSync(fs.openSync(lockFile, 'wx'));
+      break;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      try {
+        if (Date.now() - fs.statSync(lockFile).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockFile);
+          continue;
+        }
+      } catch {}
+      if (Date.now() > deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
+    }
+  }
+  try {
+    await action();
+    return true;
+  } finally {
+    try {
+      fs.unlinkSync(lockFile);
+    } catch {}
+  }
+}
+
+module.exports = { readRawDelta, withSessionLock };
