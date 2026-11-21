@@ -306,7 +306,7 @@ describe('recall-directive hook', () => {
     assert.equal(state.search.memories, 3);
   });
 
-  test('drops duplicate hits and injects up to 15 memories', async (t) => {
+  test('drops duplicate hits, injects up to 6 memories and holds the rest for later prompts', async (t) => {
     const { repo, home } = makeRepo(t);
     mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
     writeFileSync(
@@ -325,18 +325,65 @@ describe('recall-directive hook', () => {
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ searchResults: { results: hits } }));
     });
-    const { stdout } = await runHook(
-      'recall-directive.js',
-      { session_id: 's-batch', cwd: repo, prompt: 'continue the database work' },
-      { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
-    );
-    const output = JSON.parse(stdout);
+    const recall = async () =>
+      JSON.parse(
+        (
+          await runHook(
+            'recall-directive.js',
+            { session_id: 's-batch', cwd: repo, prompt: 'continue the database work' },
+            { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url },
+          )
+        ).stdout,
+      );
+    const output = await recall();
     const context = output.hookSpecificOutput.additionalContext;
     assert.equal(context.match(/Chose Drizzle over Prisma/g).length, 1);
-    assert.equal(context.match(/^- ◪ /gm).length, 15);
-    assert.match(context, /Distinct fact number 13/);
-    assert.doesNotMatch(context, /Distinct fact number 14/);
-    assert.match(plain(output.systemMessage), /recalled 15 memories/);
+    assert.equal(context.match(/^- ◪ /gm).length, 6);
+    assert.match(context, /Distinct fact number 4/);
+    assert.doesNotMatch(context, /Distinct fact number 5/);
+    assert.match(plain(output.systemMessage), /recalled 6 memories/);
+
+    const next = (await recall()).hookSpecificOutput.additionalContext;
+    assert.equal(next.match(/^- ◪ /gm).length, 6);
+    assert.match(next, /Distinct fact number 5/);
+    assert.match(next, /Distinct fact number 10/);
+    assert.doesNotMatch(next, /Distinct fact number 4\b/);
+    assert.doesNotMatch(next, /supermemory-guide/);
+  });
+
+  test('states the recall guidance once per session, at SessionStart when it runs', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(
+      join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }),
+    );
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(
+        JSON.stringify({
+          profile: { static: ['Uses Bun'], dynamic: [] },
+          searchResults: {
+            results: [{ memory: 'Chose Drizzle over Prisma', similarity: 0.82 }],
+          },
+        }),
+      );
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url };
+    const input = { session_id: 's-guide', cwd: repo, prompt: 'continue the database work' };
+
+    const start = JSON.parse((await runHook('session-start.js', input, env)).stdout);
+    assert.match(start.hookSpecificOutput.additionalContext, /<supermemory-guide>/);
+    assert.match(start.hookSpecificOutput.additionalContext, /defaults to this project's container/);
+
+    const recalled = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
+    assert.match(recalled.hookSpecificOutput.additionalContext, /Chose Drizzle over Prisma/);
+    assert.doesNotMatch(recalled.hookSpecificOutput.additionalContext, /supermemory-guide/);
+
+    assert.equal(JSON.parse((await runHook('recall-directive.js', input, env)).stdout).hookSpecificOutput, undefined);
+    await runHook('session-start.js', { ...input, source: 'compact' }, env);
+    const afterCompact = JSON.parse((await runHook('recall-directive.js', input, env)).stdout);
+    assert.match(afterCompact.hookSpecificOutput.additionalContext, /Chose Drizzle over Prisma/);
   });
 
   test('a configured recallDirective restores advisory mode verbatim', async (t) => {
