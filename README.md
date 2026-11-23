@@ -226,10 +226,10 @@ For swarms that replay one task across many sessions, two local indexes in
 | --- | --- |
 | `maxProfileItems` | Max memories in context (default: 5). |
 | `recallDirective` | Set to switch prompt recall from direct hook search to an advisory instruction Claude reasons over. |
-| `signalExtraction` | Only capture important turns (default: false). |
+| `signalExtraction` | Only capture important turns (default: false). Legacy API only; v5 sends the whole session. |
 | `signalKeywords` | Keywords that trigger capture. |
 | `signalTurnsBefore` | Context turns before signal (default: 3). |
-| `includeTools` | Tool calls to explicitly capture. |
+| `includeTools` | Tool calls to explicitly capture. Legacy API only; v5 sends every tool call and result. |
 | `debug` | Enable debug logging (default: false). |
 | `captureSubagents` | Recall and capture for relayed background-subagent results (default: false). |
 | `captureHeadless` | Recall and capture for `claude -p` and GitHub Action runs (default: false). |
@@ -300,8 +300,11 @@ to select another space. Conversation turns are saved when a session ends.
 
 ## Privacy
 
-Automatic capture sends new conversation content to Supermemory, including tool
-content when configured. Before saving, an offline filter replaces common
+Automatic capture sends new conversation content to Supermemory. On the v5 API
+it sends the raw transcript, including every tool call and its result, and
+memories are built from the conversation text; on the legacy API tool content is
+sent only for tools listed in `includeTools`. Before saving, an offline filter
+replaces common
 credential-shaped values (provider tokens, credential assignments, private keys,
 Bearer tokens, and URL credentials) with explicit `[REDACTED:…]` markers while
 keeping surrounding context. Content wrapped in `<private>…</private>` is
