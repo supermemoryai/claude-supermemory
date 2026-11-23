@@ -98,11 +98,14 @@ function readCursor(fd, size, sessionId, destination) {
       return cursor;
     }
   } catch {}
-  return {
-    offset: bootstrapOffset(fd, size, sessionId),
+  const offset = bootstrapOffset(fd, size, sessionId);
+  const cursor = {
+    offset,
     generation: 0,
-    headHash: '',
+    headHash: hashPrefix(fd, Math.min(HEAD_BYTES, offset)),
   };
+  atomicWriteJson(cursorPath(sessionId, destination), cursor);
+  return cursor;
 }
 
 // Hash of the first `len` bytes. The caller hashes only the already-consumed

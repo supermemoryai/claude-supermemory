@@ -733,6 +733,42 @@ describe('v5 session capture', () => {
     assert.match(sent()[0].content, /new question/);
     assert.ok(sent()[0].metadata.sm_session_offset > 0);
   });
+
+  test('a failed first upload keeps its turns for the next Stop', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+    const transcript = join(makeTempDir(t, 'v5-first-fail'), 'session.jsonl');
+    let fail = true;
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      if (fail) {
+        res.statusCode = 503;
+        res.end(JSON.stringify({ error: 'unavailable' }));
+        return;
+      }
+      res.end(JSON.stringify({ id: 'doc_v5', status: 'queued' }));
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url,
+      SUPERMEMORY_API_VERSION: 'v5' };
+    const run = () => runHook('capture.js',
+      { session_id: 'v5-first-fail', cwd: repo, transcript_path: transcript }, env);
+    const first = [user('u1', 'turn one question'), reply('a1', 'turn one answer')]
+      .map(line).join('');
+    writeFileSync(transcript, first);
+    await run();
+    fail = false;
+    writeFileSync(transcript, first + [
+      user('u2', 'turn two question'),
+      reply('a2', 'turn two answer'),
+    ].map(line).join(''));
+    await run();
+    const saved = stub.requests.map((request) => JSON.parse(request.body)).at(-1);
+    assert.equal(saved.metadata.sm_session_offset, 0);
+    assert.match(saved.content, /turn one question/);
+    assert.match(saved.content, /turn two answer/);
+  });
 });
 
 describe('session scope', () => {
