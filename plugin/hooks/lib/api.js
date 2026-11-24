@@ -75,12 +75,12 @@ function useV5(baseUrl, options, namespace) {
   return true;
 }
 
-function sdkClient(baseUrl, apiKey, options) {
+function sdkClient(baseUrl, apiKey, options, headers = {}) {
   const { Supermemory } = require('../vendor/supermemory.cjs');
   return new Supermemory({
     apiKey,
     baseUrl: baseUrl.replace(/\/+$/, ''),
-    headers: SOURCE_HEADERS,
+    headers: { ...SOURCE_HEADERS, ...headers },
     timeoutInSeconds: (options.timeoutMs ?? REQUEST_TIMEOUT_MS) / 1000,
     maxRetries: 0,
   });
@@ -148,6 +148,27 @@ async function searchMemories(baseUrl, apiKey, namespace, query, options = {}) {
   return response.results;
 }
 
+function confirmAccepted(result) {
+  if (
+    typeof result?.id !== 'string' ||
+    !result.id ||
+    ![
+      'unknown',
+      'queued',
+      'extracting',
+      'chunking',
+      'embedding',
+      'indexing',
+      'done',
+    ].includes(result.status)
+  ) {
+    throw new Error(
+      'Supermemory did not confirm document acceptance; capture cursor retained.',
+    );
+  }
+  return result;
+}
+
 async function addMemory(
   baseUrl,
   apiKey,
@@ -169,24 +190,7 @@ async function addMemory(
       },
       sdkOptions(options),
     );
-    if (
-      typeof result?.id !== 'string' ||
-      !result.id ||
-      ![
-        'unknown',
-        'queued',
-        'extracting',
-        'chunking',
-        'embedding',
-        'indexing',
-        'done',
-      ].includes(result.status)
-    ) {
-      throw new Error(
-        'Supermemory did not confirm document acceptance; capture cursor retained.',
-      );
-    }
-    return result;
+    return confirmAccepted(result);
   }
   const body = {
     content,
@@ -212,10 +216,36 @@ async function addMemory(
   return result;
 }
 
+// Sends raw transcript records; the x-sm-session header asks the server to format them into memory.
+async function addSession(baseUrl, apiKey, namespace, raw, options = {}) {
+  const result = await sdkClient(baseUrl, apiKey, options, {
+    'x-sm-session': 'claude-code',
+  }).add(
+    namespace,
+    {
+      content: raw,
+      id: options.id,
+      supportingContext: options.supportingContext,
+      metadata: {
+        sm_source: 'claude-code',
+        ...options.metadata,
+        sm_session_generation: options.generation,
+        sm_session_offset: options.offset,
+      },
+      taskType: 'memory',
+      dreaming: 'dynamic',
+    },
+    sdkOptions(options),
+  );
+  return confirmAccepted(result);
+}
+
 module.exports = {
   AGENT_SUPPORTING_CONTEXT,
   AGENT_ENTITY_CONTEXT: AGENT_SUPPORTING_CONTEXT,
   getProfile,
   searchMemories,
   addMemory,
+  addSession,
+  useV5,
 };
