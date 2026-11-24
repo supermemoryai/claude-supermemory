@@ -18,8 +18,10 @@ const { readStdin, writeOutput } = require('./lib/stdin');
 const { startBackgroundAuth, getOAuthConfig } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
+const { recallGuidance, markGuidanceSent } = require('./lib/recall-guidance');
 const { getSkipReason } = require('./lib/session-scope');
 const {
+  getSessionDir,
   pruneState,
   readCaptureNotice,
   writeState,
@@ -128,11 +130,20 @@ function formatContext(profileResult, maxItems, namespace, projectName) {
   }
 
   return `<supermemory-context>
-Recalled memory for this project (${projectName}). Every line marked ◪ comes from supermemory — when citing one, keep the mark and phrase it naturally (e.g. "◪ last week you told me about X"). If you name the source, say "from supermemory" — never "from memory".
+Recalled memory for this project (${projectName}).
 This project's memory container: ${namespace}
 
 ${sections.join('\n\n')}
 </supermemory-context>`;
+}
+
+// Compaction drops earlier recall from context, so let those memories be recalled again.
+function forgetRecalled(sessionDir) {
+  for (const file of ['recalled.json', 'discovery.json']) {
+    try {
+      fs.unlinkSync(path.join(sessionDir, file));
+    } catch {}
+  }
 }
 
 // Stop is async and exits 0, so a failed save only reaches the user here.
@@ -170,6 +181,8 @@ async function main() {
     }
     sessionId = input.session_id;
     const cwd = input.cwd || process.cwd();
+    const sessionDir = getSessionDir(sessionId);
+    if (sessionDir && input.source === 'compact') forgetRecalled(sessionDir);
 
     const statuslineCleanupNotice = removeLegacyStatusline();
     pruneState();
@@ -264,6 +277,7 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
         : null;
 
     const captureNotice = captureFailureNotice();
+    markGuidanceSent(sessionDir);
     output(
       (apiError
         ? `<supermemory-status>\n${apiError}\n</supermemory-status>\n`
@@ -279,7 +293,8 @@ Memory could not be loaded this session — do not assume this project has no me
             : `<supermemory-context>
 No previous memories found for this project (container: ${namespace}).
 Memories will be saved as you work.
-</supermemory-context>`)),
+</supermemory-context>`)) +
+        `\n${recallGuidance(namespace)}`,
       [
         captureNotice?.systemMessage,
         [memoryNotice, welcomeBackNotice(namespace)]
