@@ -6,7 +6,7 @@ const {
 } = require('./lib/api');
 const { hasOpeningPrompt, rememberOpeningPrompt } = require('./lib/dedupe');
 const { redactSecrets } = require('./lib/redact');
-const { readRawDelta, withSessionLock } = require('./lib/session');
+const { readRawChunks, withSessionLock } = require('./lib/session');
 const { getSkipReason } = require('./lib/session-scope');
 const {
   getNamespace,
@@ -38,11 +38,21 @@ const {
 } = require('./lib/session-state');
 
 const CAPTURE_TIMEOUT_MS = 25000;
+const MIN_REQUEST_MS = 1000;
+const REJECTED_STATUSES = new Set([400, 413, 415, 422]);
+
+function formatBytes(bytes) {
+  return bytes >= 1024 * 1024
+    ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 // Stop allows 30s; this write outlives the 3s default without slowing SessionStart.
 async function main() {
+  const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
   const settings = loadSettings();
   let sessionId;
+  let notice = '';
 
   try {
     const input = await readStdin();
@@ -85,13 +95,67 @@ async function main() {
 
     if (useV5(baseUrl, { apiVersion }, namespace)) {
       const acquired = await withSessionLock(sessionId, async () => {
-        const session = readRawDelta(transcriptPath, sessionId, {
+        const chunks = readRawChunks(transcriptPath, sessionId, {
           destination: `${baseUrl}\n${namespace}`,
           lastAssistantMessage: input.last_assistant_message,
           captureSubagents: settings.captureSubagents,
         });
-        if (session && !session.raw) session.commit();
-        if (!session?.raw) {
+        let sent = 0;
+        let skippedBytes = 0;
+        let truncatedBytes = 0;
+        let lastId;
+        const skipReasons = new Set();
+        for (const chunk of chunks) {
+          if (chunk.oversizedBytes > 0) {
+            chunk.commit(
+              `one transcript line of ${formatBytes(chunk.oversizedBytes)} is too large to send`,
+            );
+            skippedBytes += chunk.oversizedBytes;
+            skipReasons.add('line too large');
+            continue;
+          }
+          if (!chunk.raw) {
+            chunk.commit();
+            continue;
+          }
+          const remaining = deadline - Date.now();
+          if (remaining < MIN_REQUEST_MS) break;
+          if (sent === 0) {
+            writeState(sessionId, 'capture', { status: 'saving', count: captured });
+          }
+          try {
+            const result = await addSession(baseUrl, apiKey, namespace, chunk.raw, {
+              id: sessionId,
+              generation: chunk.generation,
+              offset: chunk.offset,
+              supportingContext: AGENT_SUPPORTING_CONTEXT,
+              metadata,
+              apiVersion,
+              timeoutMs: remaining,
+            });
+            chunk.commit();
+            sent++;
+            truncatedBytes += chunk.truncatedBytes;
+            lastId = result.id;
+          } catch (err) {
+            const status = err?.status ?? err?.statusCode;
+            if (!REJECTED_STATUSES.has(status)) throw err;
+            const bytes = Buffer.byteLength(chunk.raw);
+            chunk.commit(`server rejected ${formatBytes(bytes)} with HTTP ${status}`);
+            skippedBytes += bytes;
+            skipReasons.add(`HTTP ${status}`);
+            debugLog(settings, 'Chunk rejected and skipped', {
+              offset: chunk.offset,
+              end: chunk.end,
+              status,
+            });
+          }
+        }
+        if (sent === 0 && skippedBytes === 0) {
+          if (chunks.some((chunk) => chunk.raw)) {
+            debugLog(settings, 'Capture deadline reached; delta left for the next Stop');
+            return;
+          }
           writeState(sessionId, 'capture', {
             status: 'no_content',
             count: captured,
@@ -99,35 +163,44 @@ async function main() {
           debugLog(settings, 'No new content to save');
           return;
         }
-        writeState(sessionId, 'capture', { status: 'saving', count: captured });
-        const result = await addSession(baseUrl, apiKey, namespace, session.raw, {
-          id: sessionId,
-          generation: session.generation,
-          offset: session.offset,
-          supportingContext: AGENT_SUPPORTING_CONTEXT,
-          metadata,
-          apiVersion,
-          timeoutMs: CAPTURE_TIMEOUT_MS,
-        });
-        session.commit();
         writeState(sessionId, 'capture', {
-          status: 'saved',
-          count: captured + 1,
+          status: sent > 0 ? 'saved' : 'error',
+          count: captured + (sent > 0 ? 1 : 0),
         });
         clearCaptureNotice();
-        try {
-          saveLastSession({ id: result.id, containerTag: namespace });
-        } catch {}
+        if (lastId) {
+          try {
+            saveLastSession({ id: lastId, containerTag: namespace });
+          } catch {}
+        }
+        const skippedNote =
+          skippedBytes > 0
+            ? `skipped ${formatBytes(skippedBytes)} of this session (${[...skipReasons].join(', ')}); ranges listed in ~/.supermemory-claude/session`
+            : '';
+        if (skippedNote) writeCaptureNotice(skippedNote);
+        notice = [
+          truncatedBytes > 0
+            ? `trimmed ${formatBytes(truncatedBytes)} of oversized tool output`
+            : '',
+          skippedNote,
+        ]
+          .filter(Boolean)
+          .join(' · ');
         debugLog(settings, 'Session sent', {
-          bytes: session.raw.length,
-          generation: session.generation,
-          offset: session.offset,
+          chunks: chunks.length,
+          sent,
+          skippedBytes,
+          truncatedBytes,
         });
       });
       if (!acquired) {
         debugLog(settings, 'Capture lock busy; delta left for the next Stop');
       }
-      writeOutput({ continue: true });
+      writeOutput(
+        notice
+          ? { continue: true, systemMessage: `◪ supermemory · ${notice}` }
+          : { continue: true },
+      );
       return;
     }
 
