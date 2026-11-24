@@ -769,6 +769,74 @@ describe('v5 session capture', () => {
     assert.match(saved.content, /turn one question/);
     assert.match(saved.content, /turn two answer/);
   });
+
+  test('sends a large delta in capped chunks, trims oversized output and skips rejected chunks', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+    const transcript = join(makeTempDir(t, 'v5-chunks'), 'session.jsonl');
+    let down = false;
+    let limit = Number.POSITIVE_INFINITY;
+    const stub = await startStubServer(t, (record, res) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.statusCode = down ? 503 : record.body.length > limit ? 413 : 200;
+      res.end(JSON.stringify(res.statusCode === 200 ? { id: 'doc_v5', status: 'queued' } : { error: 'x' }));
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url,
+      SUPERMEMORY_API_VERSION: 'v5' };
+    const run = () => runHook('capture.js',
+      { session_id: 'v5-chunks', cwd: repo, transcript_path: transcript }, env);
+    const sent = () => stub.requests.map((request) => JSON.parse(request.body));
+    const turn = (n, bytes) => [
+      user(`u${n}`, `turn ${n} question`),
+      { type: 'user', uuid: `r${n}`, message: { content: [
+        { type: 'tool_result', tool_use_id: `t${n}`, content: 'x'.repeat(bytes) },
+      ] } },
+      reply(`a${n}`, `turn ${n} answer`),
+    ].map(line).join('');
+
+    writeFileSync(transcript, turn(1, 10));
+    await run();
+    down = true;
+    writeFileSync(transcript, turn(1, 10) + turn(2, 150000) + turn(3, 150000) + turn(4, 150000));
+    await run();
+    await run();
+    const outage = sent().slice(1);
+    assert.equal(outage.length, 2);
+    assert.ok(outage.every((body) => Buffer.byteLength(body.content) <= 256 * 1024));
+    assert.equal(outage[0].metadata.sm_session_offset, outage[1].metadata.sm_session_offset);
+
+    down = false;
+    await run();
+    const recovered = sent().slice(3);
+    assert.ok(recovered.length > 1);
+    for (let i = 1; i < recovered.length; i++) {
+      const prev = recovered[i - 1];
+      assert.equal(recovered[i].metadata.sm_session_offset,
+        prev.metadata.sm_session_offset + Buffer.byteLength(prev.content));
+    }
+    assert.match(recovered.at(-1).content, /turn 4 answer/);
+
+    const before = readFileSync(transcript, 'utf8');
+    writeFileSync(transcript, before + turn(5, 1024 * 1024));
+    await run();
+    const trimmed = sent().at(-1);
+    assert.ok(Buffer.byteLength(trimmed.content) <= 256 * 1024);
+    assert.match(trimmed.content, /\[truncated \d+ chars\]/);
+    assert.match(trimmed.content, /turn 5 answer/);
+
+    limit = 50000;
+    const withSkipped = readFileSync(transcript, 'utf8') + turn(6, 100000);
+    writeFileSync(transcript, withSkipped);
+    const skipped = await run();
+    assert.match(JSON.parse(skipped.stdout).systemMessage, /skipped \d+ KB of this session \(HTTP 413\)/);
+    writeFileSync(transcript, withSkipped + turn(7, 10));
+    await run();
+    const resumed = sent().at(-1);
+    assert.equal(resumed.metadata.sm_session_offset, Buffer.byteLength(withSkipped));
+    assert.match(resumed.content, /turn 7 question/);
+  });
 });
 
 describe('session scope', () => {

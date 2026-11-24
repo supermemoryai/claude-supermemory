@@ -95,6 +95,15 @@ The hooks are tolerant: if Supermemory is unreachable, the API key is missing, o
 anything else fails, they exit cleanly without breaking your Claude Code session.
 A capture that fails is reported the next time a session starts.
 
+On the v5 API the Stop hook sends the new transcript in whole-line chunks of at
+most 256 KB, reading at most 8 MB per turn within its 25-second budget, and
+moves the cursor after each accepted chunk. A single record over 256 KB keeps
+its JSON shape with long strings cut to 16k characters. A chunk the server
+rejects with 400, 413, 415, or 422 is skipped so later turns still go out; the
+hook says so, and the skipped byte ranges stay in the cursor file under
+`~/.supermemory-claude/session/` (the transcript still holds them). Other
+failures leave the cursor at that chunk for the next turn.
+
 ### Directory review and permissions
 
 MCP tool calls follow your Claude Code permission rules. The `PreToolUse` hook

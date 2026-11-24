@@ -16,6 +16,10 @@ const HEAD_BYTES = 4096;
 const LOCK_RETRY_MS = 50;
 const LOCK_WAIT_MS = 25000;
 const LOCK_STALE_MS = 35000;
+const MAX_CHUNK_BYTES = 256 * 1024;
+const MAX_READ_BYTES = 8 * 1024 * 1024;
+const MAX_RECORD_STRING_CHARS = 16 * 1024;
+const MAX_SKIPPED_RANGES = 20;
 const PRIVATE_BLOCK = /<private>[\s\S]*?<\/private>/gi;
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -118,57 +122,63 @@ function hashPrefix(fd, len) {
   return sha256(buf);
 }
 
-// Drops fully private and host-notification turns and redacts the rest; a reply missing from the file is sent from the Stop input and skipped when it lands.
-function filterRecords(lines, cursor, options) {
-  let hidden = Boolean(cursor.hidden);
-  let pendingReply = cursor.pendingReply || '';
-  let lastReply = cursor.lastReply || '';
-  const kept = [];
-  for (const line of lines) {
-    const entry = parseLine(line);
-    if (!entry) {
-      if (!hidden) kept.push(redactText(line));
-      continue;
-    }
-    if (startsTurn(entry)) {
-      hidden =
-        isFullyPrivate(getTextFromEntry(entry)) ||
-        (!options.captureSubagents && isHostNotificationEntry(entry));
-      pendingReply = '';
-    }
-    if (hidden) continue;
-    if (entry.type === 'assistant') {
-      const text = replyText(entry);
-      if (text) {
-        const hash = sha256(text);
-        lastReply = hash;
-        if (hash === pendingReply) {
-          pendingReply = '';
-          continue;
-        }
-      }
-    }
-    kept.push(JSON.stringify(entry, redactValue));
-  }
-
-  const finalText = cleanContent(options.lastAssistantMessage);
-  if (finalText && !hidden && sha256(finalText) !== lastReply) {
-    kept.push(
-      JSON.stringify({
-        type: 'assistant',
-        message: {
-          content: [{ type: 'text', text: redactText(options.lastAssistantMessage) }],
-        },
-      }),
-    );
-    pendingReply = sha256(finalText);
-    lastReply = pendingReply;
-  }
-  return { kept, hidden, pendingReply, lastReply };
+function truncateString(text) {
+  return text.length > MAX_RECORD_STRING_CHARS
+    ? `${text.slice(0, MAX_RECORD_STRING_CHARS)}…[truncated ${text.length - MAX_RECORD_STRING_CHARS} chars]`
+    : text;
 }
 
-function readRawDelta(transcriptPath, sessionId, options = {}) {
-  if (!fs.existsSync(transcriptPath)) return null;
+function truncateValue(_key, value) {
+  return typeof value === 'string' ? truncateString(redactText(value)) : value;
+}
+
+// A record too big for one request keeps its JSON shape with long strings cut, so the turn is still captured.
+function fitRecord(entry) {
+  const text = typeof entry === 'string' ? redactText(entry) : JSON.stringify(entry, redactValue);
+  const bytes = Buffer.byteLength(text);
+  if (bytes <= MAX_CHUNK_BYTES) return { text, truncatedBytes: 0 };
+  const cut = typeof entry === 'string' ? truncateString(text) : JSON.stringify(entry, truncateValue);
+  return { text: cut, truncatedBytes: bytes - Buffer.byteLength(cut) };
+}
+
+// Drops fully private and host-notification turns and redacts the rest; a reply missing from the file is sent from the Stop input and skipped when it lands.
+function filterLine(line, state, options) {
+  const entry = parseLine(line);
+  if (!entry) return state.hidden ? null : fitRecord(line);
+  if (startsTurn(entry)) {
+    state.hidden =
+      isFullyPrivate(getTextFromEntry(entry)) ||
+      (!options.captureSubagents && isHostNotificationEntry(entry));
+    state.pendingReply = '';
+  }
+  if (state.hidden) return null;
+  if (entry.type === 'assistant') {
+    const text = replyText(entry);
+    if (text) {
+      const hash = sha256(text);
+      state.lastReply = hash;
+      if (hash === state.pendingReply) {
+        state.pendingReply = '';
+        return null;
+      }
+    }
+  }
+  return fitRecord(entry);
+}
+
+function findNewline(fd, from, size) {
+  const block = Buffer.alloc(64 * 1024);
+  for (let position = from; position < size; position += block.length) {
+    const read = fs.readSync(fd, block, 0, Math.min(block.length, size - position), position);
+    const index = block.subarray(0, read).indexOf(0x0a);
+    if (index !== -1) return position + index;
+  }
+  return -1;
+}
+
+// Splits the bytes appended since the last accepted send into whole-line chunks, reading at most MAX_READ_BYTES per Stop, so an outage or one huge turn never builds a request the server can't take.
+function readRawChunks(transcriptPath, sessionId, options = {}) {
+  if (!fs.existsSync(transcriptPath)) return [];
   const destination = options.destination || '';
   const fd = fs.openSync(transcriptPath, 'r');
   try {
@@ -176,53 +186,106 @@ function readRawDelta(transcriptPath, sessionId, options = {}) {
     const prev = readCursor(fd, size, sessionId, destination);
     let offset = prev.offset;
     let generation = prev.generation;
-    let state = prev;
+    let base = prev;
 
     const consumedHead = hashPrefix(fd, Math.min(HEAD_BYTES, prev.offset));
     if (size < prev.offset || (prev.headHash && prev.headHash !== consumedHead)) {
       offset = 0;
       generation = prev.generation + 1;
-      state = {};
+      base = {};
     }
-
-    let lines = [];
-    let nextOffset = offset;
-    if (size > offset) {
-      const buf = Buffer.alloc(size - offset);
-      fs.readSync(fd, buf, 0, size - offset, offset);
-      const lastNewline = buf.lastIndexOf(0x0a);
-      if (lastNewline !== -1) {
-        lines = buf
-          .subarray(0, lastNewline)
-          .toString('utf8')
-          .split('\n')
-          .filter((line) => line.trim());
-        nextOffset = offset + lastNewline + 1;
-      }
-    }
-
-    const { kept, hidden, pendingReply, lastReply } = filterRecords(
-      lines,
-      state,
-      options,
-    );
-    if (nextOffset === offset && kept.length === 0) return null;
-    const nextHead = hashPrefix(fd, Math.min(HEAD_BYTES, nextOffset));
-
-    return {
-      raw: kept.length > 0 ? `${kept.join('\n')}\n` : '',
-      generation,
-      offset,
-      commit: () =>
-        atomicWriteJson(cursorPath(sessionId, destination), {
-          offset: nextOffset,
-          generation,
-          headHash: nextHead,
-          hidden,
-          pendingReply,
-          lastReply,
-        }),
+    const state = {
+      hidden: Boolean(base.hidden),
+      pendingReply: base.pendingReply || '',
+      lastReply: base.lastReply || '',
     };
+    const skipped = Array.isArray(prev.skipped) ? [...prev.skipped] : [];
+    const cursorFile = cursorPath(sessionId, destination);
+    const chunks = [];
+    const pushChunk = (start, end, lines, snapshot, truncatedBytes = 0, oversizedBytes = 0) => {
+      const headHash = hashPrefix(fd, Math.min(HEAD_BYTES, end));
+      chunks.push({
+        raw: lines.length > 0 ? `${lines.join('\n')}\n` : '',
+        generation,
+        offset: start,
+        end,
+        truncatedBytes,
+        oversizedBytes,
+        commit: (skipReason) => {
+          if (skipReason) {
+            skipped.push({ generation, offset: start, end, reason: skipReason });
+            skipped.splice(0, Math.max(0, skipped.length - MAX_SKIPPED_RANGES));
+          }
+          atomicWriteJson(cursorFile, {
+            offset: end,
+            generation,
+            headHash,
+            ...snapshot,
+            ...(skipped.length > 0 ? { skipped } : {}),
+          });
+        },
+      });
+    };
+
+    const len = Math.min(size - offset, MAX_READ_BYTES);
+    const buf = Buffer.alloc(len);
+    if (len > 0) fs.readSync(fd, buf, 0, len, offset);
+    const lastNewline = buf.lastIndexOf(0x0a);
+    if (lastNewline === -1 && len === MAX_READ_BYTES) {
+      const lineEnd = findNewline(fd, offset + len, size);
+      if (lineEnd !== -1) {
+        pushChunk(offset, lineEnd + 1, [], { ...state }, 0, lineEnd + 1 - offset);
+      }
+      return chunks;
+    }
+
+    let chunkStart = offset;
+    let chunkLines = [];
+    let chunkBytes = 0;
+    let chunkTruncated = 0;
+    const add = (kept, at, before) => {
+      const bytes = Buffer.byteLength(kept.text) + 1;
+      if (chunkLines.length > 0 && chunkBytes + bytes > MAX_CHUNK_BYTES) {
+        pushChunk(chunkStart, at, chunkLines, before, chunkTruncated);
+        chunkStart = at;
+        chunkLines = [];
+        chunkBytes = 0;
+        chunkTruncated = 0;
+      }
+      chunkLines.push(kept.text);
+      chunkBytes += bytes;
+      chunkTruncated += kept.truncatedBytes;
+    };
+    for (let lineStart = 0; lineStart <= lastNewline; ) {
+      const newline = buf.indexOf(0x0a, lineStart);
+      const lineOffset = offset + lineStart;
+      const line = buf.subarray(lineStart, newline).toString('utf8');
+      lineStart = newline + 1;
+      if (!line.trim()) continue;
+      const before = { ...state };
+      const kept = filterLine(line, state, options);
+      if (kept) add(kept, lineOffset, before);
+    }
+    const end = offset + lastNewline + 1;
+
+    const finalText =
+      len === size - offset ? cleanContent(options.lastAssistantMessage) : '';
+    if (finalText && !state.hidden && sha256(finalText) !== state.lastReply) {
+      const before = { ...state };
+      state.pendingReply = sha256(finalText);
+      state.lastReply = state.pendingReply;
+      add(
+        fitRecord({
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: options.lastAssistantMessage }] },
+        }),
+        end,
+        before,
+      );
+    }
+    if (end === offset && chunkLines.length === 0) return chunks;
+    pushChunk(chunkStart, end, chunkLines, { ...state }, chunkTruncated);
+    return chunks;
   } finally {
     fs.closeSync(fd);
   }
@@ -259,4 +322,4 @@ async function withSessionLock(sessionId, action) {
   }
 }
 
-module.exports = { readRawDelta, withSessionLock };
+module.exports = { readRawChunks, withSessionLock };
