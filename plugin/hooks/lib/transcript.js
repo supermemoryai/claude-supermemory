@@ -288,7 +288,7 @@ function formatUserMessage(message) {
           continue;
         }
         const resultContent = truncate(
-          cleanContent(block.content || ''),
+          cleanContent(getToolResultText(block.content)),
           MAX_TOOL_RESULT_LENGTH,
         );
         const status = block.is_error ? 'error' : 'success';
@@ -302,6 +302,16 @@ function formatUserMessage(message) {
   }
 
   return parts.length > 0 ? parts.join('\n') : null;
+}
+
+// Agent and MCP tool results arrive as content blocks, not a plain string.
+function getToolResultText(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block) => block?.type === 'text' && block.text)
+    .map((block) => block.text)
+    .join('\n');
 }
 
 function formatAssistantMessage(message) {
