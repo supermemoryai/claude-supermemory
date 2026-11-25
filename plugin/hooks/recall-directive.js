@@ -7,6 +7,7 @@ const { BRAND, gray, red } = require('./lib/colors');
 const { getNamespace } = require('./lib/container-tag');
 const { cacheRecall, cachedRecall } = require('./lib/dedupe');
 const { getUserFriendlyError } = require('./lib/error-helpers');
+const { outOfCreditsNotice } = require('./lib/out-of-credits');
 const { loadProjectConfig } = require('./lib/project-config');
 const {
   loadSettings,
@@ -133,9 +134,11 @@ When one of these shapes your answer, credit it naturally with the ◪ prefix (e
 
 async function main() {
   const settings = loadSettings();
+  let sessionId;
 
   try {
     const input = await readStdin();
+    sessionId = input.session_id;
     const skipReason = getSkipReason(input, settings);
     if (skipReason) {
       debugLog(settings, 'Supermemory skipped', { reason: skipReason });
@@ -292,6 +295,15 @@ async function main() {
       err?.cause?.name === 'AbortError'
     ) {
       writeOutput({ continue: true, suppressOutput: true });
+      return;
+    }
+    const creditsNotice = outOfCreditsNotice(sessionId, err);
+    if (creditsNotice !== undefined) {
+      writeOutput({
+        ...(creditsNotice ? { systemMessage: creditsNotice } : {}),
+        continue: true,
+        suppressOutput: true,
+      });
       return;
     }
     writeOutput({

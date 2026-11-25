@@ -93,7 +93,9 @@ tells Claude when it should decide to search on its own.
 
 The hooks are tolerant: if Supermemory is unreachable, the API key is missing, or
 anything else fails, they exit cleanly without breaking your Claude Code session.
-A capture that fails is reported the next time a session starts.
+A capture that fails is reported the next time a session starts. When the account
+is out of credits, recall is refused; the hooks say so once per session with the
+top-up link and stay quiet on later prompts.
 
 ### Directory review and permissions
 
