@@ -17,6 +17,7 @@ const { BRAND, MARK, bold, gray } = require('./lib/colors');
 const { readStdin, writeOutput } = require('./lib/stdin');
 const { startBackgroundAuth, getOAuthConfig } = require('./lib/auth');
 const { getUserFriendlyError } = require('./lib/error-helpers');
+const { outOfCreditsNotice } = require('./lib/out-of-credits');
 const { LAST_SESSION_FILE } = require('./lib/last-session');
 const { getSkipReason } = require('./lib/session-scope');
 const {
@@ -219,6 +220,7 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
 
     let profileResult = null;
     let apiError = null;
+    let creditsNotice = null;
     try {
       profileResult = await getProfile(
         baseUrl,
@@ -232,6 +234,7 @@ Or set the SUPERMEMORY_CC_API_KEY environment variable.
     } catch (err) {
       if ((err?.status ?? err?.statusCode) !== 404)
         apiError = getUserFriendlyError(err);
+      creditsNotice = outOfCreditsNotice(sessionId, err);
       debugLog(settings, 'Profile fetch failed', {
         error: getUserFriendlyError(err),
       });
@@ -282,6 +285,7 @@ Memories will be saved as you work.
 </supermemory-context>`)),
       [
         captureNotice?.systemMessage,
+        creditsNotice,
         [memoryNotice, welcomeBackNotice(namespace)]
           .filter(Boolean)
           .join(gray(' · ')) || null,

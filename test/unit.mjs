@@ -1380,3 +1380,38 @@ describe('statusline rendering', () => {
     );
   });
 });
+
+describe('out-of-credits refusal', () => {
+  test('shows one out-of-credits line per session and never blocks the turn', async (t) => {
+    const { repo, home } = makeRepo(t);
+    mkdirSync(join(home, '.supermemory-claude'), { recursive: true });
+    writeFileSync(join(home, '.supermemory-claude', 'credentials.json'),
+      JSON.stringify({ apiKey: 'sm_test_key_0123456789abcdef' }));
+    const stub = await startStubServer(t, (record, res) => {
+      res.statusCode = 402;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'Search query limit reached',
+        details: "You've run out of credits. Top up to continue.",
+      }));
+    });
+    const env = { HOME: home, USERPROFILE: home, SUPERMEMORY_API_URL: stub.url,
+      SUPERMEMORY_API_VERSION: 'v5' };
+    const notices = [];
+    for (const [hook, input] of [
+      ['recall-directive.js', { session_id: 'credits', cwd: repo, prompt: 'how did we set up the migrations?' }],
+      ['recall-directive.js', { session_id: 'credits', cwd: repo, prompt: 'and where are the seeds kept?' }],
+      ['session-start.js', { session_id: 'credits', cwd: repo, source: 'compact' }],
+    ]) {
+      const { code, stdout } = await runHook(hook, input, env);
+      assert.equal(code, 0);
+      const output = JSON.parse(stdout);
+      assert.notEqual(output.continue, false);
+      notices.push(...plain(output.systemMessage || '').split('\n').filter((line) => /credits/.test(line)));
+    }
+    assert.equal(stub.requests.length, 3);
+    assert.deepEqual(notices, [
+      "◪ supermemory · recall paused · You've run out of credits. Top up to continue. https://console.supermemory.ai/billing",
+    ]);
+  });
+});
